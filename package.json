@@ -1,0 +1,17 @@
+{
+  "name": "demo-creator",
+  "version": "1.0.0",
+  "description": "Turn a client BRS into a branded, section-by-section demo video walkthrough recorded on the iOS Simulator.",
+  "type": "module",
+  "bin": {
+    "demo-creator": "./bin/demo-creator.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "demo-creator": "node ./bin/demo-creator.mjs"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

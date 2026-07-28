@@ -1,0 +1,13 @@
+# Client deliveries — big videos + client BRS docs live here, not in git
+projects/*
+!projects/.gitkeep
+
+# Session memory (machine-local)
+.remember/
+
+# Dashboard build output
+dashboard/node_modules/
+dashboard/.next/
+dashboard/next-env.d.ts
+
+.DS_Store
