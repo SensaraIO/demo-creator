@@ -1,0 +1,14 @@
+interface:
+  display_name: "Android Client Demo"
+  short_description: "Record Android client demos with UI-Voyager"
+  default_prompt: "Use $android-client-demo to plan, record, verify, and build an Android client demo."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "android-ui-voyager"
+      description: "Local UI-Voyager Android emulator driver"
+      transport: "stdio"
+
+policy:
+  allow_implicit_invocation: true

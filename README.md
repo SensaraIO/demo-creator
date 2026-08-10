@@ -18,7 +18,9 @@ how to drive the app, whether a clip really shows what it claims.
 
 ## Requirements
 
-macOS with Xcode (`xcrun simctl`), `ffmpeg` + `ffprobe`, Node 20+.
+Node 20+ and `ffmpeg` + `ffprobe`. iOS capture also requires macOS with Xcode
+(`xcrun simctl`). Android capture uses ADB, the local `android-ui-voyager` MCP,
+and `scrcpy`.
 
 ```bash
 node bin/demo-creator.mjs doctor
@@ -50,6 +52,12 @@ node bin/demo-creator.mjs frames acme-client 01-signup --count 8
 node bin/demo-creator.mjs build acme-client
 open projects/acme-client/dist/index.html
 ```
+
+For Android, invoke `$android-client-demo` from Codex. It keeps this same BRS,
+planning, verification, dashboard, and build pipeline, but Codex records the
+emulator with `scrcpy` while the local UI-Voyager model drives it one observable
+MCP step at a time. The complete procedure is in
+`skills/android-client-demo/SKILL.md`.
 
 ## Project layout
 
@@ -149,9 +157,17 @@ cd ~/code/demo-creator
 cd dashboard && npm install        # dashboard deps
 ```
 
-The canonical copy of the `client-demo` skill lives in `skills/client-demo/`;
-`install-skills.sh` copies it into `~/.claude/skills` (re-run after pulling
-skill changes). The skill and briefs assume the repo at
+The canonical skill copies live in `skills/client-demo/` for iOS and
+`skills/android-client-demo/` for Android. `install-skills.sh` copies them into
+`~/.claude/skills` (re-run after pulling skill changes). Codex users can install
+the Android skill with:
+
+```bash
+mkdir -p ~/.codex/skills/android-client-demo
+rsync -a --delete skills/android-client-demo/ ~/.codex/skills/android-client-demo/
+```
+
+The skills and briefs assume the repo at
 `~/code/demo-creator` (`/Users/<you>/code/demo-creator`) — adjust the paths in
 the installed SKILL.md if you keep it elsewhere. `projects/` (client
 deliveries, large videos) is deliberately not in git.
