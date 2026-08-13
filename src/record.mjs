@@ -193,6 +193,18 @@ export function abortRecording(cfg, clipId) {
   return true;
 }
 
+export function probeIsLandscape(file) {
+  const r = run("ffprobe", [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=width,height",
+    "-of", "csv=p=0",
+    file,
+  ]);
+  const [w, h] = r.stdout.trim().split(",").map((n) => Number.parseInt(n, 10));
+  return Number.isFinite(w) && Number.isFinite(h) ? w > h : false;
+}
+
 export function probeDuration(file) {
   const r = run("ffprobe", [
     "-v", "error",

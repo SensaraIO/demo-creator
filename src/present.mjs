@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { renderMarkdown } from "./md.mjs";
 import { sectionWithChildren } from "./brs.mjs";
-import { probeDuration } from "./record.mjs";
+import { probeDuration, probeIsLandscape } from "./record.mjs";
 import { escapeHtml, ensureDir, humanDuration, readJson } from "./util.mjs";
 
 const STATUS = {
@@ -90,7 +90,7 @@ function statusPill(status) {
  * side — the video is the proof, the list is how to read it, so they belong
  * next to each other rather than stacked.
  */
-function demoPair(clip, mediaName, posterName) {
+function demoPair(clip, mediaName, posterName, landscape = false) {
   if (!clip.exists) return "";
   const poster = posterName ? ` poster="media/${posterName}"` : "";
   const items = clip.evidence ?? [];
@@ -100,12 +100,18 @@ function demoPair(clip, mediaName, posterName) {
         <ul>${items.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>
       </div>`
     : "";
-  return `
-    <div class="demo-pair">
-      <figure class="demo">
-        <div class="device">
+  const frame = landscape
+    ? `<div class="device browser">
+          <div class="chrome"><i></i><i></i><i></i></div>
           <video src="media/${mediaName}"${poster} controls playsinline preload="metadata"></video>
-        </div>
+        </div>`
+    : `<div class="device">
+          <video src="media/${mediaName}"${poster} controls playsinline preload="metadata"></video>
+        </div>`;
+  return `
+    <div class="demo-pair${landscape ? " wide" : ""}">
+      <figure class="demo">
+        ${frame}
         <figcaption>
           <span class="clip-title">${escapeHtml(clip.title ?? clip.id)}</span>
           ${clip.durationLabel ? `<span class="clip-meta">${escapeHtml(clip.durationLabel)}</span>` : ""}
@@ -134,7 +140,7 @@ export function buildPresentation(cfg, { open = false } = {}) {
       if (!clip.exists || mediaNames.has(clip.id)) continue;
       const v = copyInto(clip.file, mediaDir, `${clip.id}.mp4`);
       const p = copyInto(clip.poster, mediaDir, `${clip.id}.jpg`);
-      mediaNames.set(clip.id, { video: v, poster: p });
+      mediaNames.set(clip.id, { video: v, poster: p, landscape: probeIsLandscape(clip.file) });
     }
   }
 
@@ -222,7 +228,7 @@ function walkthrough(entries, mediaNames) {
     const videos = playable
       .map((c) => {
         const m = mediaNames.get(c.id) ?? {};
-        return demoPair(c, m.video, m.poster);
+        return demoPair(c, m.video, m.poster, m.landscape);
       })
       .join("\n");
 
@@ -419,10 +425,20 @@ h1,h2,h3,h4,h5,h6{line-height:1.25;letter-spacing:-.015em;margin:0}
 .demo-pair .demo{flex:0 0 232px;max-width:232px}
 .demo-pair .watch{flex:1 1 auto;margin-top:0;align-self:stretch}
 
+/* Wide (landscape/browser) recordings: full-width video, notes underneath. */
+.demo-pair.wide{flex-direction:column}
+.demo-pair.wide .demo{flex:1 1 auto;max-width:100%;width:100%}
+.demo-pair.wide .watch{width:100%}
+
 /* ---------- device frame ---------- */
 .device{background:#0b0b0f;border-radius:34px;padding:9px;box-shadow:0 10px 40px rgba(16,18,32,.22);
   border:1px solid rgba(255,255,255,.08)}
 .device video{display:block;width:100%;border-radius:26px;background:#000}
+.device.browser{border-radius:14px;padding:0;overflow:hidden}
+.device.browser .chrome{display:flex;gap:6px;padding:10px 14px;background:#16161c;
+  border-bottom:1px solid rgba(255,255,255,.06)}
+.device.browser .chrome i{width:10px;height:10px;border-radius:50%;background:#33333d;display:block}
+.device.browser video{border-radius:0}
 .demo{margin:0}
 .demo figcaption{display:flex;gap:8px;align-items:baseline;justify-content:space-between;
   margin-top:11px;font-size:12.5px;color:var(--ink-2)}
