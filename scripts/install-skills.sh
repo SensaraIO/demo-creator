@@ -13,7 +13,3 @@ for skill_dir in "$REPO_DIR"/skills/*/; do
   cp -R "$skill_dir" "$DEST/$name"
   echo "installed skill: $name -> $DEST/$name"
 done
-
-echo
-echo "Note: the client-demo skill references this repo at /Users/cheshire/code/demo-creator."
-echo "If this machine keeps the repo elsewhere, update the paths in $DEST/client-demo/SKILL.md."
