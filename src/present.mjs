@@ -144,6 +144,9 @@ export function buildPresentation(cfg, { open = false } = {}) {
     }
   }
 
+  // Optional bonus deliverable: the single continuous walkthrough (recordings/master-full.mp4).
+  const fullWalkthrough = copyInto(path.join(cfg.recordings, "master-full.mp4"), mediaDir, "full-walkthrough.mp4");
+
   const iconName = copyInto(cfg.iconPath, assetDir, "icon.png");
   const splashName = copyInto(cfg.splashPath, assetDir, "splash.png");
   const brsCopy = copyInto(cfg.brsSourcePath, assetDir, path.basename(cfg.brsSourcePath ?? "brs.docx"));
@@ -173,6 +176,7 @@ export function buildPresentation(cfg, { open = false } = {}) {
     iconName,
     splashName,
     brsCopy,
+    fullWalkthrough,
     accent,
     generatedAt: new Date(),
   });
@@ -298,7 +302,7 @@ function fullBrs(entries, mediaNames) {
   return out.join("\n");
 }
 
-function page({ cfg, brs, entries, shown, stats, mediaNames, iconName, splashName, brsCopy, accent, generatedAt }) {
+function page({ cfg, brs, entries, shown, stats, mediaNames, iconName, splashName, brsCopy, fullWalkthrough, accent, generatedAt }) {
   const appName = cfg.appName ?? brs.title;
   const client = cfg.clientName ?? "";
   const dateLabel = generatedAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -548,6 +552,7 @@ h1,h2,h3,h4,h5,h6{line-height:1.25;letter-spacing:-.015em;margin:0}
       <button class="cta" data-goto="walkthrough">Start the walkthrough →</button>
       <button class="cta ghost" data-goto="brs">Read the full BRS</button>
       ${brsCopy ? `<a class="cta ghost" href="assets/${escapeHtml(brsCopy)}" download>Download original BRS</a>` : ""}
+      ${fullWalkthrough ? `<a class="cta ghost" href="media/${escapeHtml(fullWalkthrough)}" target="_blank" rel="noopener">Watch the full walkthrough (one take)</a>` : ""}
     </div>
     <div class="how">
       <h3>How to read this</h3>
