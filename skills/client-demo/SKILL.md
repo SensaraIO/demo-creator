@@ -126,6 +126,12 @@ If a Sol agent drives, build its prompt from `agents/recorder.md` as before but 
 
 **Stopping the capture — the one that bites:** `pgrep -f recordVideo` matches BOTH the shell wrapper and the real recorder. SIGINT the actual `simctl` binary (path contains `CoreSimulator.framework/…/bin/simctl`) or the video never finalizes; the file legitimately reads 0 bytes until the moov atom is written on stop, so wait for a non-zero size before judging it. If the wrong PID was killed, the recording is still running and intact — find the real PID and stop it; nothing is lost.
 
+**Before stopping — protect the tail:** `recordVideo` flushes frames lazily. SIGINT shortly after the last screen change and the final seconds are silently missing from the file even though the screen visibly updated (the robyn-mccraw demo lost the payoff frames of two takes this way). Rule: force one extra screen change (a tiny scroll is enough), wait 4–5 seconds, then SIGINT. Then extract and LOOK at the last frame before accepting the take — but only after CFR conversion, since sparse-VFR masters misreport with plain `-ss` probes near EOF:
+
+```bash
+ffmpeg -sseof -2 -i clip.mp4 -frames:v 1 last-frame.png
+```
+
 ## 5. Split by markers
 
 Compute each clip's offsets: `start = marker.t − rec-start`, `end` likewise (pad start −0.5s / end +0.5s, then clamp). For each clip:
@@ -193,6 +199,7 @@ Then `state: "done"`, `finishedAt`, `stageDetail: "Presentation built"`. Confirm
 ## Gotchas that have already cost time
 
 - SIGINT the real `simctl` PID to stop recording, not the shell wrapper — and the master reads 0 bytes until finalized (see §4).
+- `recordVideo` flushes lazily: SIGINT soon after the last screen change and the tail seconds silently vanish (two takes lost their payoff frames on robyn-mccraw, 2026-08-25). Force a tiny scroll, wait 4–5s, then stop — and always eyeball the last frame (`ffmpeg -sseof -2 -i clip.mp4 -frames:v 1 …`) after CFR conversion before accepting a take (VFR masters misreport near EOF with plain `-ss` probes).
 - Never ship raw simctl output: sparse-VFR → constant 30fps re-encode, always.
 - `openurl`/foregrounding does not reset app state; terminate + relaunch does. Simulated typing has no backspace — escape sequences land as literal text.
 - iOS "Suggest Strong Passwords" swallows typed passwords; disable it in Settings pre-take (short-press the toggle, plain taps often don't register).
