@@ -48,7 +48,7 @@ That clones (or fast-forwards) the repo to `~/code/demo-creator`, installs `ffmp
 sudo -n launchctl asuser "$(id -u)" sudo -u "$(whoami)" ~/.local/bin/claude --print "…"
 ```
 
-Recording also needs that GUI session — `xcrun simctl io recordVideo` cannot capture without one. A machine sitting at the login window cannot produce a demo. The simulator is single-occupancy per machine; see the `shared-machine` skill before booting it.
+Recording also needs that GUI session — `xcrun simctl io recordVideo` cannot capture without one. A machine sitting at the login window cannot produce a demo. The simulator is single-occupancy per machine — confirm no one else is driving it before you boot it.
 
 ## Pre-demo readiness gate
 
