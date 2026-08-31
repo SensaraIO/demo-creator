@@ -103,10 +103,10 @@ function demoPair(clip, mediaName, posterName, landscape = false) {
   const frame = landscape
     ? `<div class="device browser">
           <div class="chrome"><i></i><i></i><i></i></div>
-          <video src="media/${mediaName}"${poster} controls playsinline preload="metadata"></video>
+          <video src="media/${mediaName}"${poster} controls playsinline preload="none"></video>
         </div>`
     : `<div class="device">
-          <video src="media/${mediaName}"${poster} controls playsinline preload="metadata"></video>
+          <video src="media/${mediaName}"${poster} controls playsinline preload="none"></video>
         </div>`;
   return `
     <div class="demo-pair${landscape ? " wide" : ""}">
