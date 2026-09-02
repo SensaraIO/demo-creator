@@ -2,14 +2,16 @@
 
 You are planning the demo recordings for a client delivery. The client signed off
 a BRS; we built the app; now every **functional requirement** they can actually
-see on screen must be paired with a video of it working.
+see on screen must be paired with a video of it working. The whole demo is
+recorded as one continuous take and cut into clips afterwards, so the plan is
+both the coverage map and the take script.
 
 ## Inputs
 
 - Parsed BRS: `{{BRS_JSON}}` ({{SECTION_COUNT}} sections; each has `id`, `number`, `title`, `level`, `body`, `text`)
 - BRS as markdown: `{{BRS_MD}}`
 - App under demo: `{{APP_PATH}}` (bundle id `{{BUNDLE_ID}}`)
-- The app's source tree — read it. The plan must reflect what the app *actually*
+- The app's source tree. Read it: the plan must reflect what the app *actually*
   does, not what the BRS wished for.
 
 ## Your job
@@ -31,20 +33,21 @@ Rules that matter:
 
 - **Only functional requirements get clips.** Non-functional sections
   (performance, security, compliance, scalability, maintainability) are
-  `backend` or `narrative` — never `demo`.
+  `backend` or `narrative`, never `demo`.
 - A parent section whose children are all covered individually should be
   `narrative` with a reason like "covered by 4.1–4.4", not a duplicate clip.
 - Be honest about `not-implemented`. A clip that quietly demonstrates something
-  adjacent is worse than an admitted gap — the client will notice, and it costs
+  adjacent is worse than an admitted gap: the client will notice, and it costs
   us the trust the whole document is meant to build.
-- `reason` is client-readable. Write it as a sentence, not a code comment.
+- `reason` and `evidence` are client-readable. Plain sentences that say what is
+  on screen, no flourish.
 
 ### 2. Design the clips
 
 One clip per coherent user-visible flow. Prefer a clip that covers 2–4 tightly
 related subsections (e.g. sign-up + OTP + profile setup) over a clip per bullet:
 the client wants to watch the product work, not sit through 40 six-second stubs.
-But never merge unrelated requirements just to reduce the count — traceability is
+But never merge unrelated requirements just to reduce the count; traceability is
 the point.
 
 Each clip:
@@ -71,7 +74,7 @@ Each clip:
 }
 ```
 
-- `id` must be filename-safe and ordered (`01-`, `02-`, …) — it becomes the video filename.
+- `id` must be filename-safe and ordered (`01-`, `02-`, …); it becomes the video filename.
 - `steps` are instructions for a recording agent driving the simulator. Be
   concrete about what to tap and what should appear. Include `wait` steps where
   the app animates or hits the network; a clip that races ahead of the UI is
@@ -80,11 +83,23 @@ Each clip:
   frames against. Each item must be observable in the video, not inferred.
 - Keep clips under ~90 seconds.
 
-### 3. Order
+### 3. Order the clips as one take
 
 Order clips the way you would demo the app to someone who has never seen it:
 onboarding first, then the core loop, then secondary features, then settings and
-account management.
+account management. Because everything records in one pass, the order is also
+the take script, and the cuts between clips must land on clean screen
+transitions:
+
+- Each clip ends on a settled screen and the next begins with a visible
+  navigation (a tab tap, a push), so the cut point falls between them.
+- Flows that need different accounts or roles (regular vs admin) go at the ends
+  of the take with a log-out/log-in seam between them; seam footage is not part
+  of any clip.
+- `notes` must give the driver everything it cannot discover on its own: test
+  credentials per role, seeded data it may rely on, the exact off-screen command
+  for fetching OTP or invite codes, and anything that only works on a real
+  device.
 
 ## Output shape
 
@@ -102,7 +117,7 @@ account management.
 }
 ```
 
-Write the file, then run `demo-creator plan validate {{PROJECT}}` and fix
-anything it reports. Reply with a short summary: clip count, how many sections
-are `demo` / `backend` / `narrative` / `not-implemented`, and any gaps worth
-raising with the team before we record.
+You are done when `demo-creator plan validate {{PROJECT}}` reports no problems.
+Reply with a short summary: clip count, how many sections are `demo` /
+`backend` / `narrative` / `not-implemented`, and any gaps worth raising with the
+team before we record.

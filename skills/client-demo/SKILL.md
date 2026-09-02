@@ -5,166 +5,96 @@ description: Produce a branded demo-video walkthrough for any client project —
 
 # Client demo walkthrough
 
-Turn a client project's BRS into a branded presentation where every functional requirement sits next to a video of that requirement working on the iOS Simulator. The engine is the demo-creator tool, which lives at `$DEMO_CREATOR` — set it once per session:
+Turn a client project's BRS into a branded presentation where every functional requirement sits next to a video of that requirement working on the iOS Simulator. The engine is demo-creator at `$DEMO_CREATOR`; set it once per session and run every command from there as `node bin/demo-creator.mjs …` (`help` lists them):
 
 ```bash
 export DEMO_CREATOR="${DEMO_CREATOR:-$HOME/code/demo-creator}"
 ```
 
-Read its `README.md` before the first run of a session. Each delivery lives in `$DEMO_CREATOR/projects/<client>/` and is watched live by the demo dashboard (`$DEMO_CREATOR/dashboard`, `npm run dev`, port 4400) — so keeping `demo-status.json` current is part of the job, not optional telemetry.
+Never hardcode a home directory in this skill or in any command you derive from it. These flows run on several Macs under different usernames (`cheshire`, `sensara-studio`, `mac-mini1`, `mac-mini2`); an absolute `/Users/<someone>/…` path is the single most common way this pipeline breaks on a machine that isn't the one it was written on.
 
-**Never hardcode a home directory in this skill or in any command you derive from it.** These flows run on several Macs under different usernames (`cheshire`, `sensara-studio`, `mac-mini1`, `mac-mini2`); an absolute `/Users/<someone>/…` path is the single most common way this pipeline breaks on a machine that isn't the one it was written on.
+How a demo is made: one continuous simulator capture while the driver appends a timestamped marker at every section boundary; afterwards the master is cut into per-clip videos, each clip is verified against the evidence in the plan, only failures are retaken, and `build` produces the deck. One take instead of one recording per clip is what made this fast; per-clip recording (`record start|stop`) remains only as the retake path.
 
-**Core recording model — one take, split in post:** the whole demo is recorded as ONE continuous simulator capture while the driver logs a timestamped marker at every section boundary; afterwards ffmpeg cuts the master into per-clip videos. This replaces the old one-recorder-agent-per-clip loop (which paid agent boot + re-orientation + capture setup for every clip and was the main source of slowness). Per-clip recording still exists, but only as the retake path for a clip that fails verification.
+Division of labour: you (Claude Code) orchestrate: CLI, planning, prep, splitting, verification, deck, status file. The take has one driver. Default: one Codex agent (GPT 5.6 Sol, `-s danger-full-access`, with the `xcodebuildmcp` simulator tools) prompted with `brief <client> recorder`, which carries the take script, the marker protocol and the driver-side simulator gotchas. If you have already driven these exact flows in this session (you just built or verified the app in the simulator yourself), drive the take yourself and follow `agents/recorder.md` directly; a rehearsed driver is the fastest clean path, and spawning an agent to re-learn what you just did is waste.
 
-**Division of labour:**
+Say in a line what you are about to do before you start, give brief updates as stages complete, and close with a recap that stands on its own: what was produced, what was left out and why, and where the deck is.
 
-- You (Claude Code) are the orchestrator: CLI, planning, prep, splitting, verification, deck build, status file.
-- The take has ONE driver. Default: spawn a single GPT 5.6 Sol (Codex) agent to drive the entire take (see §4). Exception: if you have already driven these exact flows in this session (e.g. you just built or verified the app in the simulator yourself), drive the take directly — a driver who has rehearsed is the fastest clean path, and spawning an agent to re-learn what you just did is waste.
+You are operating autonomously. The user is not watching in real time and cannot answer questions mid-task, so asking 'Want me to…?' or 'Shall I…?' will block the work. For reversible actions that follow from the original request, proceed without asking. Stop only for destructive actions or genuine scope changes the user must decide. Offering follow-ups after the task is done is fine; asking permission before doing the work is not. The things to stop for here: a required flow you cannot make work, anything that would write to a production backend or real client data, and deleting recordings you did not make in this run.
 
-## 0. First run on a machine — setup gate
+Before ending your turn, check your last paragraph. If it is a plan, an analysis, a question, a list of next steps, or a promise about work you have not done ('I'll…', 'let me know when…'), do that work now with tool calls. That includes retrying after errors and gathering missing information yourself. Do not stop because the context or session is long. End your turn only when the task is complete or you are blocked on input only the user can provide.
 
-Before anything else in a session, confirm the engine is present and healthy:
+## Setup gate
+
+Confirm the engine before anything else in a session:
 
 ```bash
 export DEMO_CREATOR="${DEMO_CREATOR:-$HOME/code/demo-creator}"
 [ -d "$DEMO_CREATOR" ] && (cd "$DEMO_CREATOR" && node bin/demo-creator.mjs doctor)
 ```
 
-If the directory is missing, or `doctor` reports missing tools, run the bootstrap — it is idempotent, so running it on an already-configured machine is a safe no-op:
+If the directory is missing or `doctor` reports missing tools, run the bootstrap. It is idempotent, and it goes through `gh` because the repo is private (`gh auth login` first if `gh auth status` fails):
 
 ```bash
 gh api repos/SensaraIO/demo-creator/contents/scripts/bootstrap.sh \
   -H "Accept: application/vnd.github.raw" | bash
 ```
 
-(The repo is private, so this goes through `gh` rather than a plain `curl` of a raw URL. If `gh auth status` fails, run `gh auth login` first.)
+It clones or fast-forwards the repo to `~/code/demo-creator`, installs what `doctor` checks, re-syncs this skill, and fixes `PATH` for non-interactive SSH shells. Do not start a demo until `doctor` passes.
 
-That clones (or fast-forwards) the repo to `~/code/demo-creator`, installs `ffmpeg`/`ffprobe` via Homebrew if absent, verifies Node 20+ and `xcrun simctl`, re-syncs this skill into `~/.claude/skills/`, and ensures `~/.zshenv` puts Homebrew and `~/.local/bin` on `PATH` for non-interactive SSH sessions. Re-run `doctor` afterwards and do not start a demo until it passes.
-
-**Driving this remotely over SSH:** on macOS the login keychain is unreachable from an SSH session (`errSecInteractionNotAllowed`), so `claude` fails to authenticate. Wrap remote invocations so they run inside the logged-in GUI session:
+Over SSH the login keychain is unreachable (`errSecInteractionNotAllowed`), so `claude` cannot authenticate, and `xcrun simctl io recordVideo` cannot capture without a logged-in GUI session either. Wrap remote runs inside that session, and treat a machine sitting at the login window as unable to produce a demo:
 
 ```bash
 sudo -n launchctl asuser "$(id -u)" sudo -u "$(whoami)" ~/.local/bin/claude --print "…"
 ```
 
-Recording also needs that GUI session — `xcrun simctl io recordVideo` cannot capture without one. A machine sitting at the login window cannot produce a demo. The simulator is single-occupancy per machine — confirm no one else is driving it before you boot it.
+The simulator is single-occupancy per machine: confirm nobody else is driving it before you boot it.
 
-## Pre-demo readiness gate
+## Readiness gate
 
-Before planning or recording a client demo, compare the current implementation against the project's idea document or BRS.
+Before planning or recording, compare the current build against the idea document or BRS. If required functionality is missing, incomplete, broken, or not demonstrable, resolve it first, along with material UI and UX issues that would weaken the demo; rebuild, run, and verify the app; then start. A gap you cannot resolve is reported honestly and excluded from claimed evidence, never covered by a lookalike screen.
 
-If required functionality is missing, incomplete, broken, or not demonstrable, resolve it first. Also fix material UI and UX issues that would weaken the client demo.
+## Producing the demo
 
-Rebuild, run, and verify the app after those changes. Do not begin demo recording until the required flows work and the UI is presentation-ready. If a gap cannot be resolved, report it honestly and exclude it from claimed demo evidence.
+`init <client> --brs <brs.docx|md> --app <App.app> --client "<Client Name>" --icon <badge.png>` creates `projects/<client>/`. Create `demo-status.json` (contract below) straight away with `state: "planning"` and keep it truthful from then on.
 
-## Pipeline
+`brief <client>` prints the planner brief; you are the planner. Write `plan.json` and run `plan validate <client>` until it is clean. The brief covers how to arrange the clips as one take with clean cut points. Then set `state: "recording"`, seed `clips[]` as `pending`, set `counts.planned`.
 
-```
-init → plan → sim prep → rehearse → single-take record (live markers)
-     → split by markers → verify clips → retake failures only → build → done
-```
+`sim prep --bundle <bundleId> --app <App.app>` boots and resets the simulator, pins the status bar, reinstalls the app. Each item below has already appeared on camera once, so finish all of them before the capture starts:
 
-All CLI calls below run from `$DEMO_CREATOR` via `node bin/demo-creator.mjs …`. Run `doctor` once per session first (§0).
+- Backend live and seeded; the take must never hit a dead backend.
+- `xcrun simctl keychain <udid> reset`: a reinstall does not clear the keychain, and a stale auth token survives `simctl uninstall`. Make the app sign out cleanly when its session no longer maps to a live account.
+- Disable iOS "Suggest Strong Passwords" (Settings → General → AutoFill & Passwords): the sheet hijacks password fields and swallows typed input. The toggle often ignores plain simctl taps; use a short press gesture (touch-down, ~120 ms, touch-up on the switch) and screenshot-verify it turned off.
+- OTP retrieval: if signup emails carry codes, enable the backend's dev-only code logging (for example `DEV_LOG_OTP=1`) so the driver can read them from logs mid-take, and put the exact command in the plan's `notes`. The pause on the OTP screen reads as "user checking email".
+- Accounts staged: demo credentials decided, admin/regular role flags set server-side before the account is created on camera, app signed out and sitting on the welcome screen.
+- Brand accent is sampled from the app icon; flatten transparency on white first or it reads as black.
 
-## 1. Init + status file
+Hand the take to the driver (`brief <client> recorder`). Update `demo-status.json` as sections land (`stageDetail: "Take: section 3 of 11"`). The driver's report lists redone sections and evidence it could not get on screen; carry both into splitting and verification.
 
-```bash
-node bin/demo-creator.mjs init <client> --brs <brs.docx|md> --app <path/to/App.app> \
-  --client "<Client Name>" --icon <badge.png>
-```
+Split the master by markers. `recordings/markers.jsonl` holds lines `{"t": <epoch>, "clipId": "…", "event": "start"|"end"}`, `rec-start.txt` holds the capture's start epoch, and the last start/end pair for a clipId wins. Offsets are `marker.t − rec-start`, padded 0.5 s outward and clamped. Rules that have each cost a re-cut:
 
-Immediately create `projects/<client>/demo-status.json` (schema below) with `state: "planning"`. From here on, update the status file at every stage transition and after every clip, always bumping `updatedAt`. The dashboard treats a status file older than 5 minutes as stalled — if a stage will be quiet for longer, touch `updatedAt` with a fresh `stageDetail`.
+- simctl masters are sparse variable-frame-rate (a frame only on screen change; a 17-minute master can be 9 MB at ~0.15 fps) and can carry bogus DTS (−35 s, B-frames), which makes ffmpeg shift timestamps mid-stream so every cut lands on the wrong footage even though single-frame `-ss` probes look right. Normalise the whole master first, then cut clips from the normalised file:
 
-## 2. Plan — clips AND the take script
+  ```bash
+  ffmpeg -fflags +igndts -i master.mp4 -vf fps=30,scale=780:-2 -c:v libx264 -crf 24 -preset medium \
+    -pix_fmt yuv420p -movflags +faststart -an master-cfr.mp4
+  ffmpeg -ss <start> -to <end> -i master-cfr.mp4 -c:v libx264 -crf 24 -preset medium \
+    -pix_fmt yuv420p -movflags +faststart -an recordings/<clipId>.mp4
+  ```
 
-`node bin/demo-creator.mjs brief <client>` prints the planner brief. Fill in `plan.json` yourself (you are the planner), then `node bin/demo-creator.mjs plan validate <client>`.
+  Every shipped clip is constant 30 fps h264; raw or copy-spliced VFR stutters or freezes in common players.
+- Look at the boundary frames of every clip (`ffmpeg -ss <t> -i … -frames:v 1`) and nudge ±1–2 s until each opens on its first settled screen. That is the difference between "clean" and "obviously machine-cut".
+- Look at the last frame of each take after CFR conversion (`ffmpeg -sseof -2 -i clip.mp4 -frames:v 1 last.png`). `recordVideo` flushes lazily, and on robyn-mccraw (2026-08-25) two takes lost their payoff frames. Plain `-ss` probes near EOF misreport on VFR masters, so check after normalising, and only accept a take whose last frame is the intended final screen.
+- Also ship a trimmed CFR `master-full.mp4` (dead tail cut). Clients like the continuous video, and `build` links it from the overview.
 
-Because everything records in one pass, the plan must also define the take script: the clip order arranged as one natural user journey (registration → onboarding → core features → settings → admin …) so section boundaries fall on clean screen transitions. Rules that make splitting easy:
+Mark each clip `recorded` with `durationSec` as its file lands.
 
-- Order clips so each ends on a settled screen and the next begins with a visible navigation (a tab tap, a push) — cut points land between them.
-- Start each section by holding its first screen ~1–2s before interacting.
-- Flows needing different accounts/roles (regular vs admin) go at the ends of the take with a log-out/log-in seam between them — the seam footage is simply not part of any clip.
+Verify with a context that did not drive the take: set `state: "verifying"`, then hand `brief <client> verifier` to a fresh subagent (several in parallel is fine, one batch of clips each). It writes `verification.json` with a frame-cited verdict per clip. A failed clip gets one targeted retake of just that section (`record start|stop` around one flow, or one driver agent for that clip), re-encoded to the same CFR spec and re-verified. A clip that fails twice is marked `failed` and its file moved out of `recordings/` (for example into `recordings/rejected/`), so the deck records an honest gap instead of shipping a video the verifier rejected.
 
-Set `state: "recording"`, seed `clips[]` (all `"pending"`), set `counts.planned`.
-
-## 3. Simulator prep (all of it BEFORE recording)
-
-```bash
-node bin/demo-creator.mjs sim prep --bundle <bundleId> --app <App.app>
-```
-
-Boot/reset the sim, pin the status bar, install the app, dismiss first-run dialogs. Then the pre-take checklist — every item here is a defect that has already appeared on camera once:
-
-- Backend live + seeded; never let the take hit a dead backend.
-- Disable iOS "Suggest Strong Passwords" (Settings → General → AutoFill & Passwords): the sheet hijacks password fields and swallows typed input. The toggle often ignores plain simctl taps — use a short press gesture (touch-down, ~120ms, touch-up on the switch) and screenshot-verify it turned off.
-- OTP retrieval path: if signup emails carry OTPs, enable the backend's dev-only code logging (e.g. `DEV_LOG_OTP=1`) so the driver can read the code from logs mid-take. The pause on the OTP screen reads as "user checking email" — natural, don't fear it.
-- Accounts staged: demo credentials decided, admin/regular role flags set server-side BEFORE the account is created on camera; app signed out and sitting on the welcome screen.
-- State resets: foregrounding via URL/openurl does NOT reset app state — to hard-reset, terminate the app process and relaunch. There is no backspace via simulated typing (escape sequences type literally), so a wrong field value means reset-and-redo, not edit.
-- Rehearse off-camera: walk every flow once, note tap coordinates for fiddly controls. Single biggest quality lever.
-
-## 4. The single take — record with live markers
-
-Start the master capture (background process):
-
-```bash
-xcrun simctl io booted recordVideo --codec h264 --force \
-  projects/<client>/recordings/master.mp4
-```
-
-The instant "Recording started" appears, log the epoch: `date +%s.%N > projects/<client>/recordings/rec-start.txt`.
-
-**Marker protocol.** The driver appends one JSON line to `projects/<client>/recordings/markers.jsonl` at the moment each section's first screen is settled, and one when its last screen is done:
-
-```bash
-echo "{\"t\": $(date +%s.%N), \"clipId\": \"01-signup\", \"event\": \"start\"}" >> markers.jsonl
-```
-
-Markers cost nothing on camera (the recording keeps rolling; a half-second pause between sections is invisible in the final clips). Waits are cheap — generation spinners, log fetches, thinking pauses all trim away in post, so drive deliberately and never rush a flow.
-
-If a Sol agent drives, build its prompt from `agents/recorder.md` as before but give it the WHOLE ordered take script plus the marker protocol, and have it run `-s danger-full-access` with the `xcodebuildmcp` MCP tools. One agent, one take. Update `demo-status.json` per section as markers land (`stageDetail: "Take: section 3 of 11"`).
-
-**Stopping the capture — the one that bites:** `pgrep -f recordVideo` matches BOTH the shell wrapper and the real recorder. SIGINT the actual `simctl` binary (path contains `CoreSimulator.framework/…/bin/simctl`) or the video never finalizes; the file legitimately reads 0 bytes until the moov atom is written on stop, so wait for a non-zero size before judging it. If the wrong PID was killed, the recording is still running and intact — find the real PID and stop it; nothing is lost.
-
-**Before stopping — protect the tail:** `recordVideo` flushes frames lazily. SIGINT shortly after the last screen change and the final seconds are silently missing from the file even though the screen visibly updated (the robyn-mccraw demo lost the payoff frames of two takes this way). Rule: force one extra screen change (a tiny scroll is enough), wait 4–5 seconds, then SIGINT. Then extract and LOOK at the last frame before accepting the take — but only after CFR conversion, since sparse-VFR masters misreport with plain `-ss` probes near EOF:
-
-```bash
-ffmpeg -sseof -2 -i clip.mp4 -frames:v 1 last-frame.png
-```
-
-## 5. Split by markers
-
-Compute each clip's offsets: `start = marker.t − rec-start`, `end` likewise (pad start −0.5s / end +0.5s, then clamp). For each clip:
-
-```bash
-ffmpeg -ss <start> -to <end> -i master.mp4 \
-  -vf fps=30 -c:v libx264 -crf 24 -preset medium -pix_fmt yuv420p \
-  -movflags +faststart -an recordings/<clipId>.mp4
-```
-
-Non-negotiables learned the hard way:
-
-- simctl output is sparse variable-frame-rate (frames only on screen change — a 17-min master can be 9 MB and ~0.15 fps average). Every shipped clip must be re-encoded to constant 30fps exactly as above; raw or copy-spliced VFR stutters or freezes in common players.
-- Verify cut points visually: extract one frame at each boundary (`ffmpeg -ss <t> -frames:v 1 …`), look at it, and nudge ±1–2s until the clip opens on the section's first settled screen. Cheap, and it's the difference between "clean" and "obviously machine-cut".
-- Also produce a trimmed, CFR full-walkthrough `master-full.mp4` (cut the dead tail) — clients love the single continuous video as a bonus deliverable.
-
-Mark each clip `status: "recorded"` (+`durationSec`) as its file lands, `stageDetail: "Splitting master into clips (i of N)"`.
-
-## 6. Verify
-
-Set `state: "verifying"`. For each clip: `node bin/demo-creator.mjs frames <client> <clipId> --count 8`, read the frames, check every `evidence` item from the plan, write `verification.json` (per-clip `pass` + `evidenceChecks` citing frames).
-
-A clip that fails verification does not trigger a new master take — record just that section as a targeted retake (the old per-clip path: `record start|stop` around one flow, or one Sol agent for that single clip), re-encode to the same CFR spec, and re-verify. If it fails twice, mark it failed and move on — an honest gap beats a faked clip. Never substitute a lookalike screen for the requirement.
-
-## 7. Build + finish
-
-```bash
-node bin/demo-creator.mjs build <client>
-```
-
-Then `state: "done"`, `finishedAt`, `stageDetail: "Presentation built"`. Confirm `projects/<client>/dist/index.html` opens. If the run dies at any stage, set `state: "failed"` + top-level `error` before stopping — never leave the status file claiming progress that isn't happening.
+`build <client>` writes `projects/<client>/dist/index.html`.
 
 ## demo-status.json (dashboard contract)
+
+The dashboard (`$DEMO_CREATOR/dashboard`, `npm run dev`, port 4400) watches this file. Rewrite it whole and atomically at every state transition and after every clip, always bumping `updatedAt`; a file untouched for 5 minutes shows as stalled, so touch it with a fresh `stageDetail` during long quiet stages. If the run dies at any stage, write `state: "failed"` and a top-level `error` before stopping; never leave the file claiming progress that isn't happening.
 
 ```json
 {
@@ -196,16 +126,8 @@ Then `state: "done"`, `finishedAt`, `stageDetail: "Presentation built"`. Confirm
 
 `state`: `planning | recording | verifying | building | done | failed` (splitting reports under `recording` via `stageDetail` — the dashboard schema is unchanged). Clip `status`: `pending | recording | recorded | verified | failed`. Clip `agent`: `"single-take"` for clips cut from the master, `"gpt-5.6-sol"` for targeted retakes. Timestamps ISO-8601 UTC. Always rewrite the whole file atomically so the dashboard never reads a half file.
 
-## Gotchas that have already cost time
+## Done when
 
-- SIGINT the real `simctl` PID to stop recording, not the shell wrapper — and the master reads 0 bytes until finalized (see §4).
-- `recordVideo` flushes lazily: SIGINT soon after the last screen change and the tail seconds silently vanish (two takes lost their payoff frames on robyn-mccraw, 2026-08-25). Force a tiny scroll, wait 4–5s, then stop — and always eyeball the last frame (`ffmpeg -sseof -2 -i clip.mp4 -frames:v 1 …`) after CFR conversion before accepting a take (VFR masters misreport near EOF with plain `-ss` probes).
-- Never ship raw simctl output: sparse-VFR → constant 30fps re-encode, always.
-- `openurl`/foregrounding does not reset app state; terminate + relaunch does. Simulated typing has no backspace — escape sequences land as literal text.
-- iOS "Suggest Strong Passwords" swallows typed passwords; disable it in Settings pre-take (short-press the toggle, plain taps often don't register).
-- Segmented OTP inputs: type the first digit, screenshot, then the rest — bulk text entry fills only the first box.
-- Brand accent is sampled from the app icon; flatten transparency on white first or it reads as black.
-- Rehearse each flow off-camera before recording — still the single biggest quality lever.
-- simctl masters can carry bogus DTS (−35 s, B-frames): ffmpeg then shifts timestamps mid-stream and every clip cut lands on the wrong footage, even though single-frame `-ss` probes look right. Decode with `-fflags +igndts`, and normalise the whole master to one CFR 30fps file first (`ffmpeg -fflags +igndts -i master.mp4 -vf fps=30,scale=780:-2 …`) — then cut clips from that with plain `-ss/-to`. Check boundary frames after splitting, always.
-- HID text entry (`idb ui text`, the simulator MCP `text` action) is lowercase-only on iOS 26 simulators and mangles shifted symbols (`+`→`=`, `@`→`2`). For mixed-case input tap the on-screen keyboard keys instead (shift/caps-lock + key, 123 / #+= layers; ABC-before-space because iOS auto-returns to letters after punctuation+space). The tap approach also gives you backspace (delete key) and reads as natural typing on camera.
-- An app reinstall does NOT clear the keychain: a stale auth token survives `simctl uninstall`. Run `xcrun simctl keychain <udid> reset` during prep, and make the app sign out cleanly when its session no longer maps to a live account.
+- `node bin/demo-creator.mjs check <client>` exits 0: every planned clip is a 30 fps h264 file with a passing, frame-cited verdict (or an acknowledged gap with no file left behind), `demo-status.json` matches the contract, and the deck exists.
+- `projects/<client>/dist/index.html` opens and the clips play.
+- `demo-status.json` says `done` with `finishedAt`, and your recap lists every gap.

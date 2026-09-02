@@ -64,6 +64,7 @@ ${C.bold}Recording${C.reset}
 
 ${C.bold}Delivery${C.reset}
   build <project>                    build the presentation into projects/<p>/dist
+  check <project>                    ship gate: clips CFR + verified, status file valid, deck built
 `;
 
 function cmdDoctor() {
@@ -185,7 +186,7 @@ function cmdBrief(args) {
     .replaceAll("{{APP_NAME}}", cfg.appName ?? "")
     .replaceAll("{{BUNDLE_ID}}", cfg.bundleId ?? "")
     .replaceAll("{{APP_PATH}}", cfg.appPath ?? "")
-    .replaceAll("{{UDID}}", cfg.udid ?? "(booted simulator)")
+    .replaceAll("{{UDID}}", cfg.udid ?? "booted")
     .replaceAll("{{BRS_JSON}}", cfg.brs)
     .replaceAll("{{BRS_MD}}", cfg.brsMarkdown)
     .replaceAll("{{PLAN_PATH}}", cfg.plan)
@@ -199,6 +200,11 @@ function cmdBrief(args) {
 function cmdPlanValidate(args) {
   const cfg = loadConfig(args._[2]);
   if (!fs.existsSync(cfg.plan)) die(`no plan yet — expected ${cfg.plan}`);
+  return validatePlan(cfg) === 0 ? 0 : 1;
+}
+
+/** Check plan.json against the BRS. Returns the number of hard problems found. */
+function validatePlan(cfg) {
   const brs = readJson(cfg.brs);
   const plan = readJson(cfg.plan);
   const ids = new Set(brs.sections.map((s) => s.id));
@@ -254,6 +260,115 @@ function cmdPlanValidate(args) {
   }
 
   if (problems === 0) ok(`plan is valid — ${(plan.clips ?? []).length} clips`);
+  return problems;
+}
+
+// The dashboard's contract for demo-status.json (dashboard/lib/projects.ts).
+const RUN_STATES = ["planning", "recording", "verifying", "building", "done", "failed"];
+const CLIP_STATES = ["pending", "recording", "recorded", "verified", "failed"];
+
+function probeStream(file) {
+  const r = run("ffprobe", [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=codec_name,pix_fmt,avg_frame_rate:format=duration",
+    "-of", "json",
+    file,
+  ]);
+  try {
+    const j = JSON.parse(r.stdout);
+    const s = j.streams?.[0] ?? {};
+    return { codec: s.codec_name, pixFmt: s.pix_fmt, fps: s.avg_frame_rate, duration: Number.parseFloat(j.format?.duration) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The ship gate. Everything here is a defect that has reached, or nearly
+ * reached, a client: sparse-VFR clips that freeze in players, clips that were
+ * never verified against their evidence, a verifier-rejected clip left on disk
+ * where `build` would still ship it labelled "Recorded", and status files the
+ * dashboard cannot read. Exit 0 means the delivery is ready to send.
+ */
+function cmdCheck(args) {
+  const cfg = loadConfig(args._[1]);
+  let problems = 0;
+  const bad = (msg) => {
+    fail(msg);
+    problems++;
+  };
+
+  if (!fs.existsSync(cfg.plan)) {
+    bad(`no plan at ${cfg.plan}`);
+    return 1;
+  }
+  problems += validatePlan(cfg);
+  const clips = readJson(cfg.plan).clips ?? [];
+
+  const statusFile = path.join(cfg.dir, "demo-status.json");
+  let status = null;
+  if (!fs.existsSync(statusFile)) bad("no demo-status.json: the dashboard cannot see this run");
+  else {
+    try {
+      status = JSON.parse(fs.readFileSync(statusFile, "utf8"));
+    } catch (e) {
+      bad(`demo-status.json is not valid JSON: ${e.message}`);
+    }
+  }
+  const statusClip = (id) => (status?.clips ?? []).find((c) => c.id === id);
+
+  const verification = fs.existsSync(cfg.verification) ? readJson(cfg.verification) : null;
+  if (!verification) bad("no verification.json: nothing has been checked against its evidence");
+  const verdicts = new Map((verification?.results ?? []).map((v) => [v.clipId, v]));
+
+  let passed = 0;
+  let gaps = 0;
+  for (const clip of clips) {
+    const file = path.join(cfg.recordings, `${clip.id}.mp4`);
+    const v = verdicts.get(clip.id);
+    if (!fs.existsSync(file)) {
+      if (statusClip(clip.id)?.status === "failed") {
+        warn(`${clip.id}: no recording; marked failed in demo-status.json (honest gap)`);
+        gaps++;
+      } else bad(`${clip.id}: no recording at ${path.relative(process.cwd(), file)}`);
+      continue;
+    }
+    const s = probeStream(file);
+    if (!s) {
+      bad(`${clip.id}: ffprobe could not read ${path.relative(process.cwd(), file)}`);
+      continue;
+    }
+    if (s.fps !== "30/1") bad(`${clip.id}: frame rate ${s.fps}, not constant 30/1. Raw simctl output is sparse VFR; re-encode with -vf fps=30`);
+    if (s.codec !== "h264" || !/^yuvj?420p$/.test(s.pixFmt ?? "")) bad(`${clip.id}: ${s.codec}/${s.pixFmt}, expected h264/yuv420p`);
+    if (!(s.duration >= 2)) bad(`${clip.id}: duration ${s.duration}s`);
+    if (!verification) continue;
+    if (!v) bad(`${clip.id}: recorded but not in verification.json`);
+    else if (v.pass !== true) bad(`${clip.id}: failed verification (${v.notes ?? "no notes"}) yet its file is still on disk. Retake it, or delete the file so the deck records an honest gap`);
+    else {
+      if (!(v.evidenceChecks ?? []).some((c) => c.frame || c.frames?.length)) warn(`${clip.id}: verification cites no frame; a pass should point at the frames that prove it`);
+      passed++;
+    }
+  }
+
+  if (status) {
+    if (status.version !== 1) bad(`demo-status.json version is ${status.version}, expected 1`);
+    if (!RUN_STATES.includes(status.state)) bad(`demo-status.json state "${status.state}" is not one of ${RUN_STATES.join(" | ")}`);
+    for (const c of status.clips ?? []) {
+      if (!CLIP_STATES.includes(c.status)) bad(`demo-status.json clip ${c.id}: status "${c.status}" is not one of ${CLIP_STATES.join(" | ")}`);
+    }
+    const missing = clips.filter((c) => !statusClip(c.id)).map((c) => c.id);
+    if (missing.length) bad(`demo-status.json lists none of: ${missing.join(", ")}`);
+    if (status.state === "done" && !status.finishedAt) bad("demo-status.json is done but finishedAt is empty");
+    if (status.state !== "done" && status.state !== "failed") warn(`demo-status.json state is "${status.state}"; set done with finishedAt when the delivery is sent`);
+  }
+
+  const index = path.join(cfg.dist, "index.html");
+  if (!fs.existsSync(index)) bad(`no presentation at ${path.relative(process.cwd(), index)}. Run build`);
+
+  log();
+  if (problems === 0) ok(`${cfg.name}: ${passed} of ${clips.length} clips verified at 30fps${gaps ? `, ${gaps} acknowledged gap(s)` : ""}, status file valid, presentation built`);
+  else fail(`${problems} problem(s): not ready to send`);
   return problems === 0 ? 0 : 1;
 }
 
@@ -380,6 +495,7 @@ const COMMANDS = {
   clips: cmdClips,
   status: cmdStatus,
   build: cmdBuild,
+  check: cmdCheck,
   projects: () => {
     const list = listProjects();
     if (!list.length) warn("no projects yet");

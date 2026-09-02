@@ -92,6 +92,7 @@ projects/<client>/
 | `clips <p>` | list recordings with durations |
 | `status <p>` | coverage: planned / recorded / verified |
 | `build <p>` | build the presentation into `dist/` |
+| `check <p>` | ship gate: every clip 30fps and verified, status file valid, deck built |
 
 ## How sections are identified
 

@@ -7,10 +7,11 @@ description: Produce a branded Android client demo from a BRS. Plan one continuo
 
 Turn a client's BRS into a branded presentation where every visual functional
 requirement sits beside video evidence of that requirement working on Android.
-Use the `demo-creator` engine at `/Users/cheshire/code/demo-creator`; read its
-`README.md` before the first run of a session. Each delivery lives under
-`projects/<client>/` and the dashboard watches its `demo-status.json` live at
-`http://127.0.0.1:4400` when `dashboard/npm run dev` is running.
+The engine is `demo-creator` at `$DEMO_CREATOR` (default `~/code/demo-creator`;
+never hardcode a home directory, these flows run on several Macs under different
+usernames). Each delivery lives under `projects/<client>/` and the dashboard
+watches its `demo-status.json` live at `http://127.0.0.1:4400` when
+`dashboard/npm run dev` is running.
 
 Keep the existing `client-demo` skill for iOS. This skill is its Android
 equivalent and deliberately changes only the device driver and capture path.
@@ -35,18 +36,11 @@ UI-Voyager evidence is retained under
 user wants to watch; `scrcpy --no-playback` records without opening a second
 mirror window.
 
-## Pipeline
-
-```text
-init -> plan -> Android prep -> rehearse -> one master recording
-     -> split by markers -> verify -> retake failures only -> build -> done
-```
-
-Run demo-creator commands from `/Users/cheshire/code/demo-creator` with
+Run demo-creator commands from `$DEMO_CREATOR` with
 `node bin/demo-creator.mjs ...`. Its `doctor`, `sim prep`, and `record`
 commands are iOS-specific; do not use those three commands for this workflow.
 
-## 1. Preflight and initialize
+## Preflight and initialize
 
 Required local services and tools:
 
@@ -81,7 +75,7 @@ below with `state: "planning"`. Update it atomically at each transition and
 after every clip. Refresh `updatedAt` during any stage longer than five minutes
 so the dashboard does not report a false stall.
 
-## 2. Plan the clips and take
+## Plan the clips and take
 
 ```bash
 node bin/demo-creator.mjs brief <client>
@@ -100,7 +94,7 @@ clip must cite the exact BRS section and list visible evidence.
 Set status to `recording`, seed every planned clip as `pending`, and set
 `counts.planned`.
 
-## 3. Prepare and rehearse Android
+## Prepare and rehearse Android
 
 Install and reset the app with the selected serial:
 
@@ -113,9 +107,13 @@ adb -s <serial> shell monkey -p <android.package.name> -c android.intent.categor
 Before recording:
 
 - Confirm the backend is live and seeded.
-- Stage all demo credentials, roles, OTP access, and test data.
-- Dismiss first-run Android and app permission dialogs.
-- Disable or clear notifications that could expose private information.
+- Stage all demo credentials, roles, OTP access, and test data. Text entry is
+  unreliable, so pre-stage long credentials where possible and screenshot-check
+  each field before submitting.
+- Dismiss first-run Android and app permission dialogs; system dialogs are not
+  product evidence unless the requirement is about permissions.
+- Keep secrets, personal notifications, real accounts, and production data off
+  the recorded device.
 - Keep the emulator at a stable orientation and resolution.
 - Rehearse every flow off-camera with `android_ui_voyager_start_task` and
   single `android_ui_voyager_step` calls. Confirm each task finishes cleanly.
@@ -125,7 +123,7 @@ Treat a UI-Voyager action as a proposal that the MCP validates and executes.
 If a step is wrong, stop that task, restore the app to a known screen, and
 start a corrected task. Do not let a bad action compound through the take.
 
-## 4. Record one observable master take
+## Record one observable master take
 
 Create the recordings directory, clear stale marker files, and start scrcpy in
 a retained background terminal/process session owned by Codex:
@@ -148,15 +146,12 @@ settled and one when its evidence is complete:
 {"t": 1786370434.750, "clipId": "01-signup", "event": "end"}
 ```
 
-For each planned section:
-
-1. Update `stageDetail` with the section number and clip ID.
-2. Put the app on the section's first settled screen; write its `start` marker.
-3. Create a focused UI-Voyager task for that one flow.
-4. Call `android_ui_voyager_step` once, inspect its returned before/after
-   evidence and action, then repeat only while it advances the intended flow.
-5. When the required evidence is visibly settled, write the `end` marker and
-   update the clip status.
+Per section: put the app on its first settled screen and write the `start`
+marker, run one focused UI-Voyager task for that flow one `android_ui_voyager_step`
+at a time (inspecting each returned action and before/after evidence, and
+continuing only while it advances the intended flow), then write the `end`
+marker once the required evidence is visibly settled. Keep `stageDetail` and
+the clip status current as you go.
 
 Stop the retained scrcpy process with Ctrl-C/SIGINT through the same process
 session. Wait for a clean exit and verify the finalized master:
@@ -169,7 +164,7 @@ ffprobe -v error -show_entries format=duration,size \
 Never kill every `scrcpy` process globally. Stop only the PID/session Codex
 started for this delivery.
 
-## 5. Split by markers
+## Split by markers
 
 Compute each offset relative to `rec-start.txt`, pad the start by up to 0.5s
 and the end by up to 0.5s, then clamp to the master duration:
@@ -187,7 +182,7 @@ a trimmed, CFR `master-full.mp4` when useful.
 Mark each completed file `recorded`, set `durationSec`, and update counts and
 `stageDetail` as splitting progresses.
 
-## 6. Verify and retake only failures
+## Verify and retake only failures
 
 Set `state: "verifying"`. For every clip:
 
@@ -203,16 +198,20 @@ lifecycle and stepwise UI-Voyager control. Re-encode and re-verify it. After
 two failed attempts, mark the clip failed and report the honest gap; never
 substitute a merely similar screen.
 
-## 7. Build and finish
+## Build and finish
 
 ```bash
 node bin/demo-creator.mjs build <client>
+node bin/demo-creator.mjs check <client>
 open projects/<client>/dist/index.html
 ```
 
-Set `state: "done"`, `finishedAt`, and `stageDetail: "Presentation built"`.
-If the workflow stops with an unrecoverable error, set `state: "failed"` and
-top-level `error` before returning.
+You are done when `check` exits 0 (every planned clip is a 30 fps h264 file with
+a passing verdict, or an acknowledged `failed` gap with no file left behind, and
+the status file matches the contract), the deck opens, and the status file says
+`done` with `finishedAt` and `stageDetail: "Presentation built"`. If the
+workflow stops with an unrecoverable error, set `state: "failed"` and top-level
+`error` before returning.
 
 ## Dashboard status contract
 
@@ -245,26 +244,9 @@ top-level `error` before returning.
 ```
 
 Allowed run states are `planning`, `recording`, `verifying`, `building`,
-`done`, and `failed`. Allowed clip states are `pending`, `recording`,
-`recorded`, `verified`, and `failed`. Use agent
+`done`, and `failed`, exactly those strings: the dashboard shows any other value
+(the 2026-08-11 run wrote `complete`) as a stalled run forever. Allowed clip
+states are `pending`, `recording`, `recorded`, `verified`, and `failed`. Use agent
 `android-ui-voyager-single-take` for master cuts and
 `android-ui-voyager-retake` for targeted retakes. Use ISO-8601 UTC timestamps
 and replace the whole JSON file atomically.
-
-## Common failure points
-
-- No ADB device: call `android_environment_status`, start the intended AVD,
-  and wait for boot completion before retrying.
-- Multiple devices: always pass the same explicit serial to ADB, scrcpy, and
-  UI-Voyager.
-- Recording is not finalized: send SIGINT to the retained scrcpy process and
-  wait for it to exit before reading the file.
-- UI-Voyager drifts: stop immediately, reset to a known screen, and use a more
-  focused task. Do not continue an incorrect autonomous loop.
-- Text entry is unreliable: pre-stage long credentials when possible and
-  screenshot-check each field before submitting.
-- Android permission/system dialogs are not product evidence. Resolve them
-  before the take unless the requirement explicitly covers permissions.
-- Keep secrets, personal notifications, real accounts, and production data off
-  the recorded device.
-- Rehearsal remains the biggest quality lever.
