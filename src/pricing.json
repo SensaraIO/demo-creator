@@ -1,7 +1,7 @@
 {
-  "_note": "USD per 1M tokens, paid tier, from ai.google.dev/gemini-api/docs/pricing on 2026-09-02. Output includes thinking. Flash prices double on 2027-01-01.",
-  "gemini-3.8-flash": { "input": 0.75, "output": 3.75, "cached": 0.075 },
-  "gemini-3.7-flash": { "input": 0.75, "output": 3.75, "cached": 0.075 },
-  "gemini-3.6-flash": { "input": 0.75, "output": 3.75, "cached": 0.075 },
-  "gemini-3.5-flash-lite": { "input": 0.30, "output": 2.50, "cached": 0.03 }
+  "_note": "Gemini 3.8 Flash, paid tier, USD per 1M tokens, from ai.google.dev/gemini-api/docs/pricing (2026-09-02). Output includes thinking tokens. Every call is priced with this table regardless of model name.",
+  "gemini-3.8-flash": {
+    "until_2026-12-31": { "input": 0.75, "output": 3.75, "cached": 0.075 },
+    "from_2027-01-01":  { "input": 1.50, "output": 7.50, "cached": 0.15 }
+  }
 }

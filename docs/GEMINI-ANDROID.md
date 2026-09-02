@@ -177,14 +177,14 @@ node bin/demo-creator.mjs cost --qa acme       # one QA target: each tester and 
 node bin/demo-creator.mjs cost --all           # everything recorded on this machine
 ```
 
-Prices come from `src/pricing.json` (paid tier, per 1M tokens, dated in the file;
-Flash prices double on 2027-01-01). Thinking and tool-use tokens are billed as output.
-Rows marked "total only" are older records with no breakdown, priced conservatively at
-the output rate. This is an estimate from the API's own counts; the authoritative number
+Prices are Gemini 3.8 Flash paid tier from `src/pricing.json`, with the 2027-01-01
+increase applied by call date. Thinking and tool-use tokens are billed as output.
+Rows marked "no breakdown" are older records that stored only a total; they are priced
+at the input rate, since video and screenshot calls are almost entirely input tokens. This is an estimate from the API's own counts; the authoritative number
 is Google AI Studio → Billing, or the Cloud Billing report for the key's project.
 
 Reference points from today's runs on Flash: one clip verification ~3k tokens
-(~$0.01), a 12-minute take review ~208k tokens (~$0.60 at the worst case), a
+(~$0.01), a 12-minute take review ~208k tokens (~$0.16), a
 12-turn Computer Use round ~60k tokens (~$0.05).
 
 ## Eval
