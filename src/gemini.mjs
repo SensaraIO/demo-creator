@@ -99,6 +99,7 @@ export function runComputerUse(task, { serial, thinking = "medium", maxTurns = 6
     let stderr = "";
     let turns = 0;
     let buf = "";
+    const usage = { input: 0, output: 0, thought: 0, tool_use: 0, cached: 0, total: 0, calls: 0 };
     const handle = (chunk, isErr) => {
       buf += chunk;
       let idx;
@@ -107,6 +108,16 @@ export function runComputerUse(task, { serial, thinking = "medium", maxTurns = 6
         buf = buf.slice(idx + 1);
         if (/^Turn \d+/.test(line)) turns++;
         if (line.startsWith("Agent finished:")) report = line.slice("Agent finished:".length).trim();
+        if (line.startsWith("[usage] ")) {
+          try {
+            const u = JSON.parse(line.slice(8));
+            for (const k of Object.keys(usage)) if (k !== "calls") usage[k] += Number(u[k] ?? 0);
+            usage.calls++;
+          } catch {
+            /* ignore */
+          }
+          continue;
+        }
         if (isErr) stderr += line + "\n";
         const s = stamp(line);
         if (log !== null) fs.writeSync(log, s + "\n");
@@ -118,7 +129,7 @@ export function runComputerUse(task, { serial, thinking = "medium", maxTurns = 6
     child.on("close", (code) => {
       if (buf) handle("\n", false);
       if (log !== null) fs.closeSync(log);
-      resolve({ code, report, stderr, turns });
+      resolve({ code, report, stderr, turns, usage });
     });
   });
 }

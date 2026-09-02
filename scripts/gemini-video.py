@@ -82,11 +82,19 @@ def usage_dict(interaction) -> dict:
     u = getattr(interaction, "usage", None)
     if not u:
         return {}
+    keys = {
+        "total_input_tokens": "input",
+        "total_output_tokens": "output",
+        "total_thought_tokens": "thought",
+        "total_tool_use_tokens": "tool_use",
+        "total_cached_tokens": "cached",
+        "total_tokens": "total",
+    }
     out = {}
-    for k in ("total_tokens", "input_tokens", "output_tokens", "thought_tokens"):
+    for k, short in keys.items():
         v = getattr(u, k, None)
         if v is not None:
-            out[k] = v
+            out[short] = v
     return out
 
 

@@ -695,6 +695,25 @@ def confirm_safety(arguments: dict[str, Any]) -> bool:
     return True
 
 
+def print_usage(interaction: Any) -> None:
+    u = getattr(interaction, "usage", None)
+    if not u:
+        return
+    print(
+        "[usage] "
+        + json.dumps(
+            {
+                "input": getattr(u, "total_input_tokens", 0),
+                "output": getattr(u, "total_output_tokens", 0),
+                "thought": getattr(u, "total_thought_tokens", 0),
+                "tool_use": getattr(u, "total_tool_use_tokens", 0),
+                "cached": getattr(u, "total_cached_tokens", 0),
+                "total": getattr(u, "total_tokens", 0),
+            }
+        )
+    )
+
+
 def output_text(interaction: Any) -> str:
     direct = getattr(interaction, "output_text", None)
     if direct:
@@ -808,6 +827,7 @@ def run_agent(args: argparse.Namespace) -> int:
                 generation_config={"thinking_level": args.thinking_level},
             )
 
+            print_usage(interaction)
             for turn in range(1, args.max_turns + 1):
                 calls = [
                     step for step in interaction.steps if step.type == "function_call"
@@ -824,6 +844,7 @@ def run_agent(args: argparse.Namespace) -> int:
                     tools=[tool],
                     generation_config={"thinking_level": args.thinking_level},
                 )
+                print_usage(interaction)
             print(
                 f"Agent stopped after the {args.max_turns}-turn limit.", file=sys.stderr
             )

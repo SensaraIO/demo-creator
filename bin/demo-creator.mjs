@@ -36,8 +36,9 @@ import {
 import { C, UserError, die, ensureDir, fail, info, log, ok, parseArgs, readJson, run, warn, which, writeJson } from "../src/util.mjs";
 import { adbDevices, captureRunning, demoStatusBar, mark, prepApp, resolveSerial, startCapture, stopCapture } from "../src/android.mjs";
 import { fillTemplate, geminiComputerPath, runComputerUse, uvPath } from "../src/gemini.mjs";
-import { loadQa, printFindings, qaGate, qaInit, qaReview, qaStatus, qaTest, listRuns } from "../src/qa.mjs";
+import { listQaTargets, loadQa, printFindings, qaGate, qaInit, qaReview, qaStatus, qaTest, listRuns } from "../src/qa.mjs";
 import { splitMaster } from "../src/split.mjs";
+import { costReport, printCost } from "../src/cost.mjs";
 import { reviewPresentation, verifyClips } from "../src/video-verify.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -93,6 +94,10 @@ ${C.bold}QA loop (tester and reviewer are separate Gemini agents)${C.reset}
   qa findings <name> [--run N]       print a run's findings
   qa status <name>                   runs and verdicts
   qa gate <name> [--strict]          exit 0 when the latest reviewed run has no open findings
+
+${C.bold}Spend${C.reset}
+  cost <project> | cost --qa <name>  tokens and USD for every Gemini call recorded there
+  cost --all                         every project and QA target
 
 ${C.bold}Delivery${C.reset}
   build <project>                    build the presentation into projects/<p>/dist
@@ -637,6 +642,7 @@ async function cmdDrive(args) {
   });
   await new Promise((r2) => setTimeout(r2, 2000));
   mark(markersFile, clipId, "end");
+  fs.appendFileSync(path.join(cfg.state, "drives.jsonl"), JSON.stringify({ at: new Date().toISOString(), clipId, exit: r.code, turns: r.turns, usage: r.usage, model: args.model ? String(args.model) : null }) + "\n");
   (r.code === 0 ? ok : fail)(`${clipId}: driver exit ${r.code} after ${r.turns} turns`);
   if (r.report) log(`  ${C.dim}${r.report}${C.reset}`);
   return r.code === 0 ? 0 : 1;
@@ -759,6 +765,22 @@ const COMMANDS = {
   "verify-video": cmdVerifyVideo,
   "review-presentation": cmdReviewPresentation,
   qa: cmdQa,
+  cost: (args) => {
+    if (args.all) {
+      let total = 0;
+      for (const p of listProjects()) total += printCost(costReport({ project: p }));
+      for (const q of listQaTargets()) total += printCost(costReport({ qa: q }));
+      log(`\n  ${C.bold}all recorded Gemini spend: $${total.toFixed(4)}${C.reset}`);
+      return 0;
+    }
+    if (args.qa) {
+      printCost(costReport({ qa: String(args.qa) }));
+      return 0;
+    }
+    if (!args._[1]) die("usage: demo-creator cost <project> | cost --qa <name> | cost --all");
+    printCost(costReport({ project: args._[1] }));
+    return 0;
+  },
   projects: () => {
     const list = listProjects();
     if (!list.length) warn("no projects yet");

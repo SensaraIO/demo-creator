@@ -28,6 +28,11 @@ export const QA_DIR = path.join(ROOT, "qa");
 const AGENTS = path.join(ROOT, "agents");
 const SEVERITIES = ["blocker", "major", "minor", "polish"];
 
+export function listQaTargets() {
+  if (!fs.existsSync(QA_DIR)) return [];
+  return fs.readdirSync(QA_DIR).filter((d) => fs.existsSync(path.join(QA_DIR, d, "qa.json"))).sort();
+}
+
 export function qaPaths(name) {
   const dir = path.join(QA_DIR, name);
   return { name, dir, config: path.join(dir, "qa.json"), runs: path.join(dir, "runs") };
@@ -137,6 +142,8 @@ export async function qaTest(q, { maxTurns = 60, thinking = "high", focus, reset
     driverExit: driver.code,
     driverTurns: driver.turns,
     driverReport: driver.report,
+    driverUsage: driver.usage,
+    model: model ?? null,
     durationSec: cfr.duration,
     priorOpenFindings: priorOpen.map((f) => f.id),
   };

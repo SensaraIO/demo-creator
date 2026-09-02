@@ -165,6 +165,28 @@ uv run --script scripts/gemini-video.py --video clip.mp4 --prompt-file question.
 Options: `--model gemini-3.8-flash` (default; 3.6-flash and 3.5-flash-lite also support agentic
 video), `--thinking-level high`, `--processing static` (fixed 1fps instead of agentic).
 
+## Spend
+
+Every Gemini call records its token usage (input, output, thinking, tool-use, cached)
+next to its result: `verification.json`, `presentation-review.json`,
+`.state/drives.jsonl` for `drive`, and `run.json` / `findings.json` for QA runs.
+
+```bash
+node bin/demo-creator.mjs cost acme-client     # one project: each verify, review and drive call
+node bin/demo-creator.mjs cost --qa acme       # one QA target: each tester and reviewer call
+node bin/demo-creator.mjs cost --all           # everything recorded on this machine
+```
+
+Prices come from `src/pricing.json` (paid tier, per 1M tokens, dated in the file;
+Flash prices double on 2027-01-01). Thinking and tool-use tokens are billed as output.
+Rows marked "total only" are older records with no breakdown, priced conservatively at
+the output rate. This is an estimate from the API's own counts; the authoritative number
+is Google AI Studio → Billing, or the Cloud Billing report for the key's project.
+
+Reference points from today's runs on Flash: one clip verification ~3k tokens
+(~$0.01), a 12-minute take review ~208k tokens (~$0.60 at the worst case), a
+12-turn Computer Use round ~60k tokens (~$0.05).
+
 ## Eval
 
 `scripts/eval-video-judge.sh` stages a throwaway project from a real delivery, seeds a fake
