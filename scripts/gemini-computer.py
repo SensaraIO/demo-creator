@@ -41,7 +41,7 @@ from typing import Any, ClassVar
 from google import genai
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_MODEL = "gemini-3.7-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 DISABLED_SAFETY_POLICIES = [
     "financial_transactions",
     "sensitive_data_modification",

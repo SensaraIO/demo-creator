@@ -13,7 +13,7 @@ import { ROOT } from "./project.mjs";
 import { die, which } from "./util.mjs";
 
 export const GEMINI_VIDEO = path.join(ROOT, "scripts", "gemini-video.py");
-export const DEFAULT_VIDEO_MODEL = "gemini-3.7-flash";
+export const DEFAULT_VIDEO_MODEL = "gemini-3.8-flash";
 
 export function geminiComputerPath() {
   const found = which("gemini-computer.py");

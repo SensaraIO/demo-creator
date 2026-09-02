@@ -162,7 +162,7 @@ uv run --script scripts/gemini-video.py --video clip.mp4 --prompt-file question.
 uv run --script scripts/gemini-video.py --video clip.mp4 --prompt-file question.md --json     # JSON object parsed from the reply
 ```
 
-Options: `--model gemini-3.7-flash` (default; 3.6-flash and 3.5-flash-lite also support agentic
+Options: `--model gemini-3.8-flash` (default; 3.6-flash and 3.5-flash-lite also support agentic
 video), `--thinking-level high`, `--processing static` (fixed 1fps instead of agentic).
 
 ## Eval

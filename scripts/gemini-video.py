@@ -26,7 +26,7 @@ from pathlib import Path
 
 from google import genai
 
-DEFAULT_MODEL = "gemini-3.7-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 
 
 def load_api_key() -> bool:
