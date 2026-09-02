@@ -124,7 +124,7 @@ The dashboard (`$DEMO_CREATOR/dashboard`, `npm run dev`, port 4400) watches this
 }
 ```
 
-`state`: `planning | recording | verifying | building | done | failed` (splitting reports under `recording` via `stageDetail` — the dashboard schema is unchanged). Clip `status`: `pending | recording | recorded | verified | failed`. Clip `agent`: `"single-take"` for clips cut from the master, `"gpt-5.6-sol"` for targeted retakes. Timestamps ISO-8601 UTC. Always rewrite the whole file atomically so the dashboard never reads a half file.
+`state`: `planning | recording | verifying | building | done | failed` (splitting reports under `recording` via `stageDetail` — the dashboard schema is unchanged). Clip `status`: `pending | recording | recorded | verified | failed`. Clip `agent`: `"single-take"` for clips cut from the master, `"gpt-5.6-sol"` for targeted retakes. Timestamps ISO-8601 UTC.
 
 ## Done when
 
