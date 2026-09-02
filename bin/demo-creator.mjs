@@ -34,6 +34,11 @@ import {
   saveConfig,
 } from "../src/project.mjs";
 import { C, UserError, die, ensureDir, fail, info, log, ok, parseArgs, readJson, run, warn, which, writeJson } from "../src/util.mjs";
+import { adbDevices, captureRunning, demoStatusBar, mark, prepApp, resolveSerial, startCapture, stopCapture } from "../src/android.mjs";
+import { fillTemplate, geminiComputerPath, runComputerUse, uvPath } from "../src/gemini.mjs";
+import { loadQa, printFindings, qaGate, qaInit, qaReview, qaStatus, qaTest, listRuns } from "../src/qa.mjs";
+import { splitMaster } from "../src/split.mjs";
+import { reviewPresentation, verifyClips } from "../src/video-verify.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -62,12 +67,39 @@ ${C.bold}Recording${C.reset}
                                      sample frames for verification
   clips <project>                    list recorded clips
 
+${C.bold}Android (Gemini driver + scrcpy)${C.reset}
+  doctor --android                   adb / scrcpy / uv / gemini-computer.py / API key / device
+  android devices                    list adb devices
+  android prep --package <pkg> [--apk <file>] [--serial <s>] [--no-reset] [--demo-bar]
+  android record start|stop <project> [--serial <s>]
+                                     one continuous scrcpy master capture
+  android mark <project> <clipId> start|end
+                                     append a section marker by hand
+  drive <project> <clipId> [--serial <s>] [--thinking high] [--max-turns 40] [--task "…"]
+                                     mark start, hand one section to Gemini Computer Use, mark end
+  split <project> [--pad 0.5] [--only a,b] [--master <file>] [--force]
+                                     cut master.mp4 into clips by markers (normalises to 30fps first)
+
+${C.bold}Gemini video judge${C.reset}
+  verify-video <project> [--only a,b] [--model m] [--thinking t] [--concurrency 3]
+                                     verify every clip's evidence with agentic video understanding
+  review-presentation <project> [--file <video>]
+                                     every section shown in its window + clean-take review
+
+${C.bold}QA loop (tester and reviewer are separate Gemini agents)${C.reset}
+  qa init <name> --package <pkg> [--apk <file>] [--app-name "…"] [--focus "…"] [--notes "…"]
+  qa test <name> [--apk <file>] [--max-turns 60] [--thinking high] [--focus "…"] [--no-reset] [--demo-bar]
+  qa review <name> [--run N] [--model m] [--thinking t]
+  qa findings <name> [--run N]       print a run's findings
+  qa status <name>                   runs and verdicts
+  qa gate <name> [--strict]          exit 0 when the latest reviewed run has no open findings
+
 ${C.bold}Delivery${C.reset}
   build <project>                    build the presentation into projects/<p>/dist
   check <project>                    ship gate: clips CFR + verified, status file valid, deck built
 `;
 
-function cmdDoctor() {
+function cmdDoctor(args = {}) {
   let bad = 0;
   const check = (label, okCond, hint) => {
     if (okCond) ok(label);
@@ -76,6 +108,26 @@ function cmdDoctor() {
       bad++;
     }
   };
+  if (args.android) {
+    check("adb", which("adb"), "install Android platform-tools and put them on PATH");
+    check("scrcpy", which("scrcpy"), "brew install scrcpy");
+    check("ffmpeg", which("ffmpeg"), "brew install ffmpeg");
+    check("ffprobe", which("ffprobe"), "brew install ffmpeg");
+    check("uv", uvPath(), "curl -LsSf https://astral.sh/uv/install.sh | sh");
+    check("gemini-computer.py", geminiComputerPath(), "install the Gemini Computer Use CLI into ~/.local/bin");
+    const keyFile = path.join(process.env.HOME ?? "", ".config", "gemini", "api_key");
+    check("Gemini API key", process.env.GEMINI_API_KEY || fs.existsSync(keyFile), "export GEMINI_API_KEY or write ~/.config/gemini/api_key");
+    let devs = [];
+    try {
+      devs = which("adb") ? adbDevices().filter((d) => d.state === "device") : [];
+    } catch {
+      /* reported below */
+    }
+    if (devs.length) ok(`device: ${devs.map((d) => `${d.serial} (${d.model})`).join(", ")}`);
+    else warn("no Android device attached — boot an emulator before recording");
+    log();
+    return bad === 0 ? 0 : 1;
+  }
   check("xcrun", which("xcrun"), "install Xcode command line tools");
   const sims = run("xcrun", ["simctl", "list", "devices", "available"]);
   check("simctl", sims.code === 0, "xcrun simctl failed");
@@ -476,6 +528,211 @@ function cmdBuild(args) {
   return 0;
 }
 
+function androidCaptureState(cfg) {
+  return path.join(cfg.state, "android-capture.json");
+}
+
+function cmdAndroid(args) {
+  const sub = args._[1];
+  if (sub === "devices") {
+    const devs = adbDevices();
+    if (!devs.length) warn("no devices");
+    for (const d of devs) log(`  ${d.serial.padEnd(20)} ${d.state.padEnd(10)} ${d.model}`);
+    return 0;
+  }
+  if (sub === "prep") {
+    const serial = resolveSerial(args.serial);
+    const pkg = args.package ? String(args.package) : null;
+    if (!pkg) die("usage: demo-creator android prep --package <pkg> [--apk <file>] [--serial <s>] [--no-reset] [--demo-bar]");
+    prepApp(serial, { pkg, apk: args.apk ? path.resolve(String(args.apk)) : null, reset: !args["no-reset"] });
+    if (args["demo-bar"]) demoStatusBar(serial, true);
+    ok(`${pkg} fresh on ${serial}${args["demo-bar"] ? ", status bar pinned to 9:41" : ""}`);
+    return 0;
+  }
+  if (sub === "record") {
+    const what = args._[2];
+    const cfg = loadConfig(args._[3]);
+    const stateFile = androidCaptureState(cfg);
+    if (what === "start") {
+      const serial = resolveSerial(args.serial ?? cfg.androidSerial);
+      ensureDir(cfg.recordings);
+      const r = startCapture({ serial, outFile: path.join(cfg.recordings, "master.mp4"), stateFile });
+      ok(`master capture started on ${serial} (scrcpy pid ${r.pid}) → ${path.relative(process.cwd(), r.outFile)}`);
+      log(`${C.dim}now: demo-creator drive ${cfg.name} <clipId> for each section, then android record stop ${cfg.name}${C.reset}`);
+      return 0;
+    }
+    if (what === "stop") {
+      const r = stopCapture(stateFile);
+      ok(`master ${(r.bytes / 1e6).toFixed(1)} MB, ${r.duration?.toFixed(0) ?? "?"}s raw → ${path.relative(process.cwd(), r.file)}`);
+      log(`${C.dim}next: demo-creator split ${cfg.name}${C.reset}`);
+      return 0;
+    }
+    die("usage: demo-creator android record start|stop <project>");
+  }
+  if (sub === "mark") {
+    const cfg = loadConfig(args._[2]);
+    const clipId = args._[3];
+    const event = args._[4];
+    if (!clipId || !event) die("usage: demo-creator android mark <project> <clipId> start|end");
+    const m = mark(path.join(cfg.recordings, "markers.jsonl"), clipId, event);
+    ok(`${clipId} ${event} @ ${m.t.toFixed(3)}`);
+    return 0;
+  }
+  die(`unknown android subcommand "${sub ?? ""}"`);
+}
+
+/**
+ * One demo section, one Gemini Computer Use call. The orchestrator owns the
+ * markers around it so the driver never has to run shell commands.
+ */
+async function cmdDrive(args) {
+  const cfg = loadConfig(args._[1]);
+  const clipId = args._[2];
+  if (!clipId) die("usage: demo-creator drive <project> <clipId> [--task ...]");
+  const stateFile = androidCaptureState(cfg);
+  const capture = captureRunning(stateFile);
+  if (!capture) die(`no master capture running for ${cfg.name}; run android record start first`);
+  const serial = resolveSerial(args.serial ?? capture.serial);
+  const plan = readJson(cfg.plan);
+  const clip = (plan.clips ?? []).find((c) => c.id === clipId);
+  if (!clip && !args.task) die(`clip "${clipId}" is not in the plan; pass --task to drive an ad-hoc step`);
+
+  const stepText = (clip?.steps ?? [])
+    .map((s, i) => {
+      if (typeof s === "string") return `${i + 1}. ${s}`;
+      const bits = [s.action, s.target ? `"${s.target}"` : null, s.value ? `= ${s.value}` : null, s.note ? `(${s.note})` : null].filter(Boolean);
+      return `${i + 1}. ${bits.join(" ")}`;
+    })
+    .join("\n");
+  const notes = Array.isArray(plan.notes) ? plan.notes.join(" ") : plan.notes ?? "";
+  const task = args.task
+    ? String(args.task)
+    : fillTemplate(path.join(HERE, "..", "agents", "android-driver.md"), {
+        APP_NAME: cfg.appName ?? "",
+        PACKAGE: cfg.androidPackage ?? cfg.bundleId ?? "",
+        CLIP_ID: clip.id,
+        TITLE: clip.title ?? "",
+        OBJECTIVE: clip.objective ?? "",
+        PRECONDITIONS: clip.preconditions ?? "",
+        STEPS: stepText || "(none listed; follow the objective)",
+        EVIDENCE: (clip.evidence ?? []).map((e) => `- ${e}`).join("\n"),
+        NOTES: notes,
+      });
+  ensureDir(cfg.state);
+  fs.writeFileSync(path.join(cfg.state, `drive-${clipId}.md`), task);
+  const recStart = Number.parseFloat(fs.readFileSync(capture.recStartFile, "utf8"));
+  const markersFile = capture.markersFile;
+
+  // Let the first screen settle on camera before the driver acts.
+  await new Promise((r) => setTimeout(r, 1500));
+  mark(markersFile, clipId, "start");
+  info(`driving ${clipId} on ${serial} (Gemini Computer Use, thinking ${args.thinking ?? "high"})`);
+  const r = await runComputerUse(task, {
+    serial,
+    thinking: String(args.thinking ?? "high"),
+    maxTurns: Number(args["max-turns"] ?? 40),
+    model: args.model ? String(args.model) : undefined,
+    logFile: path.join(cfg.state, `drive-${clipId}.log`),
+    t0: recStart,
+  });
+  await new Promise((r2) => setTimeout(r2, 2000));
+  mark(markersFile, clipId, "end");
+  (r.code === 0 ? ok : fail)(`${clipId}: driver exit ${r.code} after ${r.turns} turns`);
+  if (r.report) log(`  ${C.dim}${r.report}${C.reset}`);
+  return r.code === 0 ? 0 : 1;
+}
+
+function cmdSplit(args) {
+  const cfg = loadConfig(args._[1]);
+  const only = args.only ? String(args.only).split(",").map((s) => s.trim()).filter(Boolean) : null;
+  const r = splitMaster(cfg, {
+    pad: Number(args.pad ?? 0.5),
+    only,
+    master: args.master ? path.resolve(String(args.master)) : null,
+    force: Boolean(args.force),
+  });
+  for (const c of r.clips) ok(`${c.clipId.padEnd(26)} ${c.start.toFixed(1).padStart(7)}s → ${c.end.toFixed(1).padStart(7)}s  ${c.duration.toFixed(1)}s`);
+  if (r.full) ok(`master-full.mp4 ${r.full.duration.toFixed(0)}s (starts ${r.full.offset.toFixed(1)}s into the master)`);
+  log(`${C.dim}look at frames/<clipId>/boundary-first.jpg and boundary-last.jpg, then: demo-creator verify-video ${cfg.name}${C.reset}`);
+  return 0;
+}
+
+async function cmdVerifyVideo(args) {
+  const cfg = loadConfig(args._[1]);
+  const only = args.only ? String(args.only).split(",").map((s) => s.trim()).filter(Boolean) : null;
+  const results = await verifyClips(cfg, {
+    only,
+    model: args.model ? String(args.model) : undefined,
+    thinking: args.thinking ? String(args.thinking) : undefined,
+    concurrency: Number(args.concurrency ?? 3),
+  });
+  const passed = results.filter((r) => r.pass).length;
+  log();
+  (passed === results.length ? ok : fail)(`${passed} of ${results.length} clips verified → ${path.relative(process.cwd(), cfg.verification)}`);
+  return passed === results.length ? 0 : 1;
+}
+
+async function cmdReviewPresentation(args) {
+  const cfg = loadConfig(args._[1]);
+  const r = await reviewPresentation(cfg, {
+    file: args.file ? path.resolve(String(args.file)) : null,
+    model: args.model ? String(args.model) : undefined,
+    thinking: args.thinking ? String(args.thinking) : undefined,
+  });
+  return r.cleanPresentation && r.allSectionsShown ? 0 : 1;
+}
+
+async function cmdQa(args) {
+  const sub = args._[1];
+  const name = args._[2];
+  if (sub === "init") {
+    if (!name) die("usage: demo-creator qa init <name> --package <pkg> [--apk <file>]");
+    const cfg = qaInit(name, {
+      pkg: args.package ? String(args.package) : null,
+      apk: args.apk ? String(args.apk) : null,
+      appName: args["app-name"] ? String(args["app-name"]) : null,
+      serial: args.serial ? String(args.serial) : null,
+      focus: args.focus ? String(args.focus) : "",
+      notes: args.notes ? String(args.notes) : "",
+    });
+    ok(`QA target ${C.bold}${name}${C.reset} → qa/${name} (${cfg.package})`);
+    log(`${C.dim}next: demo-creator qa test ${name}${C.reset}`);
+    return 0;
+  }
+  const q = loadQa(name);
+  if (sub === "test") {
+    const r = await qaTest(q, {
+      maxTurns: Number(args["max-turns"] ?? 60),
+      thinking: String(args.thinking ?? "high"),
+      focus: args.focus ? String(args.focus) : undefined,
+      reset: !args["no-reset"],
+      serial: args.serial ? String(args.serial) : undefined,
+      demoBar: Boolean(args["demo-bar"]),
+      model: args.model ? String(args.model) : undefined,
+      apk: args.apk ? String(args.apk) : undefined,
+    });
+    log(`${C.dim}next: demo-creator qa review ${name}${C.reset}`);
+    return r.driverExit === 0 || r.driverExit === 2 ? 0 : 1;
+  }
+  if (sub === "review") {
+    const f = qaReview(q, { run: args.run, model: args.model ? String(args.model) : undefined, thinking: args.thinking ? String(args.thinking) : undefined });
+    return f.verdict === "pass" ? 0 : 1;
+  }
+  if (sub === "findings") {
+    const runs = listRuns(q).filter((r) => r.findings);
+    const target = args.run ? runs.find((r) => r.n === Number(args.run)) : runs[runs.length - 1];
+    if (!target) die("no reviewed run");
+    printFindings(target.findings);
+    return 0;
+  }
+  if (sub === "status") {
+    qaStatus(q);
+    return 0;
+  }
+  if (sub === "gate") return qaGate(q, { strict: Boolean(args.strict) });
+  die(`unknown qa subcommand "${sub ?? ""}"`);
+}
+
 const COMMANDS = {
   doctor: cmdDoctor,
   init: cmdInit,
@@ -496,6 +753,12 @@ const COMMANDS = {
   status: cmdStatus,
   build: cmdBuild,
   check: cmdCheck,
+  android: cmdAndroid,
+  drive: cmdDrive,
+  split: cmdSplit,
+  "verify-video": cmdVerifyVideo,
+  "review-presentation": cmdReviewPresentation,
+  qa: cmdQa,
   projects: () => {
     const list = listProjects();
     if (!list.length) warn("no projects yet");
@@ -504,7 +767,7 @@ const COMMANDS = {
   },
 };
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0];
   if (!cmd || cmd === "help" || args.help) {
@@ -517,15 +780,15 @@ function main() {
     log(USAGE);
     return 1;
   }
-  return fn(args) ?? 0;
+  return (await fn(args)) ?? 0;
 }
 
-try {
-  process.exit(main());
-} catch (e) {
-  if (e instanceof UserError) {
-    fail(e.message);
-    process.exit(1);
-  }
-  throw e;
-}
+main()
+  .then((code) => process.exit(code))
+  .catch((e) => {
+    if (e instanceof UserError) {
+      fail(e.message);
+      process.exit(1);
+    }
+    throw e;
+  });

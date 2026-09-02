@@ -11,3 +11,4 @@ dashboard/.next/
 dashboard/next-env.d.ts
 
 .DS_Store
+qa/

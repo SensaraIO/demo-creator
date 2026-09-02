@@ -59,6 +59,55 @@ emulator with `scrcpy` while the local UI-Voyager model drives it one observable
 MCP step at a time. The complete procedure is in
 `skills/android-client-demo/SKILL.md`.
 
+## Android with Gemini (two agents, never the same one)
+
+Full guide with copy-paste examples and the prompts to give Claude Code:
+**[docs/GEMINI-ANDROID.md](docs/GEMINI-ANDROID.md)**.
+
+Two more skills use the same engine on the Android emulator with Google's
+Gemini in two separate roles: **Gemini Computer Use** drives the device
+(`gemini-computer.py --mobile`), and **Gemini agentic video understanding**
+judges the recording (`scripts/gemini-video.py`). The driver never sees a
+verdict and the judge never sees the driver's transcript.
+
+```bash
+node bin/demo-creator.mjs doctor --android      # adb, scrcpy, uv, gemini-computer.py, API key, device
+```
+
+**Client demo** (`skills/android-demo-gemini`): plan as usual, then
+
+```bash
+node bin/demo-creator.mjs android prep --package com.acme.app --apk app-release.apk --demo-bar
+node bin/demo-creator.mjs android record start acme-client         # scrcpy master capture
+node bin/demo-creator.mjs drive acme-client 01-signup              # one section = one Computer Use call, markers around it
+node bin/demo-creator.mjs drive acme-client 02-onboarding
+node bin/demo-creator.mjs android record stop acme-client
+node bin/demo-creator.mjs split acme-client                        # 30fps normalise + cut by markers + boundary frames
+node bin/demo-creator.mjs verify-video acme-client                 # every clip vs its evidence → verification.json
+node bin/demo-creator.mjs review-presentation acme-client          # every section shown in its window, clean take → presentation-review.json
+node bin/demo-creator.mjs build acme-client && node bin/demo-creator.mjs check acme-client
+```
+
+`split`, `verify-video` and `review-presentation` work on iOS masters too, so
+the Gemini judge can replace the frame-by-frame verifier for any project.
+
+**QA loop** (`skills/android-qa-loop`): a tester explores and is recorded, a
+reviewer watches and writes timestamped findings, Claude fixes and rebuilds,
+repeat until the gate passes.
+
+```bash
+node bin/demo-creator.mjs qa init acme --package com.acme.app --apk app-debug.apk --focus "checkout"
+node bin/demo-creator.mjs qa test acme            # Gemini Computer Use explores, scrcpy records → qa/acme/runs/001
+node bin/demo-creator.mjs qa review acme          # Gemini video → findings.json (ids, timestamps, frames, repro steps)
+#   …fix the app, rebuild the APK…
+node bin/demo-creator.mjs qa test acme --apk app-debug.apk   # round 2 re-checks round 1's open findings
+node bin/demo-creator.mjs qa review acme
+node bin/demo-creator.mjs qa gate acme            # exit 0 when no blocker/major/minor findings remain
+```
+
+Each run keeps `master-cfr.mp4`, `tester.log` (actions stamped with seconds
+into the video), `findings.json`, and one frame per finding under `frames/`.
+
 ## Project layout
 
 Each delivery is one self-contained folder you can zip and send:
@@ -91,6 +140,12 @@ projects/<client>/
 | `frames <p> <clip> [--count 6]` | sample frames for verification |
 | `clips <p>` | list recordings with durations |
 | `status <p>` | coverage: planned / recorded / verified |
+| `android devices\|prep\|record start\|stop\|mark` | Android device, scrcpy master capture, markers |
+| `drive <p> <clip>` | one demo section driven by Gemini Computer Use, markers around it |
+| `split <p>` | normalise the master to 30fps and cut clips by markers |
+| `verify-video <p>` | Gemini agentic video verifies each clip against its evidence |
+| `review-presentation <p>` | Gemini reviews the full take: sections shown, clean presentation |
+| `qa init\|test\|review\|findings\|status\|gate` | the Android QA loop |
 | `build <p>` | build the presentation into `dist/` |
 | `check <p>` | ship gate: every clip 30fps and verified, status file valid, deck built |
 
@@ -170,13 +225,18 @@ rsync -a --delete skills/android-client-demo/ ~/.codex/skills/android-client-dem
 
 The skills and briefs assume the repo at
 `~/code/demo-creator` (`/Users/<you>/code/demo-creator`) — adjust the paths in
-the installed SKILL.md if you keep it elsewhere. `projects/` (client
+the installed SKILL.md if you keep it elsewhere. The Android skills also need
+`scripts/gemini-computer.py` copied to `~/.local/bin` (see docs/GEMINI-ANDROID.md). `projects/` (client
 deliveries, large videos) is deliberately not in git.
 
 ## Agent briefs
 
 `agents/planner.md`, `agents/recorder.md`, `agents/verifier.md` are the prompts
 handed to each agent. `brief` fills the planner template with real paths.
+`agents/android-driver.md`, `qa-tester.md` (Gemini Computer Use) and
+`video-verifier.md`, `presentation-reviewer.md`, `qa-reviewer.md` (Gemini
+video) are filled by `drive`, `qa test`, `verify-video`, `review-presentation`
+and `qa review`.
 
 The rule running through all three: **never show a clip that doesn't prove its
 requirement.** An admitted gap costs one line in the deck; a wrong-but-plausible
