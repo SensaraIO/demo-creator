@@ -627,6 +627,224 @@ class MacDesktopBridge:
         pass
 
 
+class MacSimulatorBridge(MacDesktopBridge):
+    """Drives one booted iOS Simulator device. Screenshots come from `simctl io screenshot`,
+    which needs no Screen Recording permission, and every action lands inside the device
+    screen rectangle the Simulator window exposes through Accessibility, so the window may sit
+    anywhere on the display, with or without bezels. Gemini sees a phone screen and gets the
+    mobile action set (click, long_press, drag_and_drop, open_app, list_apps, go_home, go_back)."""
+
+    MAX_SIDE = 1600
+
+    def __init__(
+        self,
+        display_index: int = 0,
+        require_accessibility: bool = True,
+        udid: str | None = None,
+    ):
+        super().__init__(display_index=display_index, require_accessibility=require_accessibility)
+        import ApplicationServices as ax
+
+        self.ax = ax
+        self.udid, self.device_name = self._booted_device(udid)
+        self.screen_rect: tuple[float, float, float, float] | None = None
+        self._locate_screen()
+
+    @staticmethod
+    def _simctl(args: list[str], check: bool = True) -> str:
+        result = subprocess.run(
+            ["xcrun", "simctl", *args], capture_output=True, text=True, check=False
+        )
+        if check and result.returncode != 0:
+            raise RuntimeError(
+                f"simctl {' '.join(args[:2])} failed: {result.stderr.strip() or result.stdout.strip()}"
+            )
+        return result.stdout
+
+    def _booted_device(self, udid: str | None) -> tuple[str, str]:
+        listing = json.loads(self._simctl(["list", "devices", "booted", "-j"]))
+        booted = [d for runtime in listing["devices"].values() for d in runtime]
+        if udid:
+            for d in booted:
+                if d["udid"] == udid:
+                    return d["udid"], d["name"]
+            raise RuntimeError(f"Simulator device {udid} is not booted.")
+        if not booted:
+            raise RuntimeError("No iOS Simulator device is booted (xcrun simctl boot <device>).")
+        if len(booted) > 1:
+            names = ", ".join(f"{d['name']} {d['udid']}" for d in booted)
+            raise RuntimeError(f"Several simulators are booted; pass --udid. Booted: {names}")
+        return booted[0]["udid"], booted[0]["name"]
+
+    def _ax_attr(self, element: Any, name: str) -> Any:
+        error, value = self.ax.AXUIElementCopyAttributeValue(element, name, None)
+        return None if error else value
+
+    def _ax_frame(self, element: Any) -> tuple[float, float, float, float] | None:
+        position = self._ax_attr(element, "AXPosition")
+        size = self._ax_attr(element, "AXSize")
+        if position is None or size is None:
+            return None
+        _, point = self.ax.AXValueGetValue(position, 1, None)
+        _, extent = self.ax.AXValueGetValue(size, 2, None)
+        return (float(point.x), float(point.y), float(extent.width), float(extent.height))
+
+    def _locate_screen(self) -> tuple[float, float, float, float]:
+        pids = subprocess.run(["pgrep", "-x", "Simulator"], capture_output=True, text=True, check=False)
+        if not pids.stdout.strip():
+            subprocess.run(["open", "-a", "Simulator"], check=False)
+            time.sleep(3)
+            pids = subprocess.run(["pgrep", "-x", "Simulator"], capture_output=True, text=True, check=False)
+        if not pids.stdout.strip():
+            raise RuntimeError("Simulator.app is not running.")
+        app = self.ax.AXUIElementCreateApplication(int(pids.stdout.split()[0]))
+        windows = self._ax_attr(app, "AXWindows") or []
+        # The device screen is the largest AXGroup directly under the device window
+        # (its title starts with the device name); the buttons around it are the bezel.
+        best = None
+        for window in windows:
+            title = str(self._ax_attr(window, "AXTitle") or "")
+            if not title.startswith(self.device_name):
+                continue
+            for child in self._ax_attr(window, "AXChildren") or []:
+                if self._ax_attr(child, "AXRole") != "AXGroup":
+                    continue
+                frame = self._ax_frame(child)
+                if frame and (best is None or frame[2] * frame[3] > best[2] * best[3]):
+                    best = frame
+        if best is None:
+            raise RuntimeError(
+                f"The Simulator window for {self.device_name} is not visible on this display; "
+                "bring it to the front (open -a Simulator) and keep it on the main display."
+            )
+        self.screen_rect = best
+        return best
+
+    def _point(self, x: int, y: int) -> tuple[int, int]:
+        left, top, width, height = self.screen_rect or self._locate_screen()
+        x = min(999, max(0, int(x)))
+        y = min(999, max(0, int(y)))
+        return (int(left + x / 1000 * width), int(top + y / 1000 * height))
+
+    def screenshot(self) -> bytes:
+        self._locate_screen()
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as output:
+            output_path = Path(output.name)
+        try:
+            self._simctl(["io", self.udid, "screenshot", "--type", "png", str(output_path)])
+            png = output_path.read_bytes()
+        finally:
+            output_path.unlink(missing_ok=True)
+        with self.image.open(io.BytesIO(png)) as shot:
+            longest = max(shot.size)
+            if longest <= self.MAX_SIDE:
+                return png
+            scale = self.MAX_SIDE / longest
+            shot = shot.resize(
+                (round(shot.size[0] * scale), round(shot.size[1] * scale)),
+                self.image.Resampling.LANCZOS,
+            )
+            buffer = io.BytesIO()
+            shot.save(buffer, format="PNG", optimize=True)
+            return buffer.getvalue()
+
+    def _apps(self) -> list[dict[str, str]]:
+        plist = subprocess.run(
+            ["xcrun", "simctl", "listapps", self.udid], capture_output=True, text=True, check=True
+        ).stdout
+        converted = subprocess.run(
+            ["plutil", "-convert", "json", "-o", "-", "-"],
+            input=plist, capture_output=True, text=True, check=True,
+        ).stdout
+        apps = []
+        for bundle_id, info in json.loads(converted).items():
+            apps.append({
+                "name": info.get("CFBundleDisplayName") or info.get("CFBundleName") or bundle_id,
+                "bundle_id": bundle_id,
+                "system": info.get("ApplicationType") != "User",
+            })
+        # Installed apps first, then the system ones (Settings, Safari, Photos ...).
+        return sorted(apps, key=lambda app: (app["system"], app["name"].lower()))
+
+    def list_apps(self, **_: Any) -> dict[str, Any]:
+        return {"apps": self._apps()}
+
+    def open_app(self, app_name: str | None = None, **rest: Any) -> None:
+        # Gemini names the argument differently from turn to turn (app_name, package_name, name).
+        wanted = str(
+            app_name or rest.get("package_name") or rest.get("bundle_id") or rest.get("name") or ""
+        ).strip()
+        if not wanted:
+            raise RuntimeError("open_app needs an app name or bundle id; call list_apps.")
+        bundle_id = None
+        for app in self._apps():
+            if wanted.lower() in (app["bundle_id"].lower(), app["name"].lower()):
+                bundle_id = app["bundle_id"]
+                break
+        if bundle_id is None and "." in wanted:
+            bundle_id = wanted
+        if bundle_id is None:
+            raise RuntimeError(f"No installed app matches {app_name!r}; call list_apps.")
+        self._simctl(["launch", self.udid, bundle_id])
+        time.sleep(1.5)
+
+    def _activate(self) -> None:
+        subprocess.run(["open", "-a", "Simulator"], check=False)
+        time.sleep(0.3)
+
+    def go_home(self, **_: Any) -> None:
+        self._activate()
+        self.gui.hotkey("command", "shift", "h")
+
+    def go_back(self, **_: Any) -> None:
+        # iOS has no back button: swipe in from the left edge, the system back gesture.
+        self.drag_and_drop(start_y=500, start_x=3, end_y=500, end_x=700)
+
+    def long_press(self, y: int, x: int, seconds: int = 2, **_: Any) -> None:
+        self._move(x, y)
+        self.gui.mouseDown(button="left")
+        time.sleep(max(0.5, float(seconds)))
+        self.gui.mouseUp(button="left")
+
+    def drag_and_drop(self, start_y: int, start_x: int, end_y: int, end_x: int, **_: Any) -> None:
+        self._move(start_x, start_y)
+        destination = self._point(end_x, end_y)
+        self.gui.mouseDown(button="left")
+        self.gui.moveTo(*destination, duration=0.35)
+        self.gui.mouseUp(button="left")
+
+    def press_key(self, key: str, **_: Any) -> None:
+        normalized = key.strip().lower()
+        if normalized == "home":
+            self.go_home()
+        elif normalized == "back":
+            self.go_back()
+        else:
+            self._activate()
+            super().press_key(key)
+
+    def type(self, text: str, press_enter: bool = False, **_: Any) -> None:
+        self._activate()
+        super().type(text, press_enter=press_enter)
+
+    def state(self) -> dict[str, Any]:
+        left, top, width, height = self.screen_rect or (0, 0, 0, 0)
+        return {
+            "udid": self.udid,
+            "device": self.device_name,
+            "screen_rect": [int(left), int(top), int(width), int(height)],
+        }
+
+    def check(self) -> dict[str, Any]:
+        screenshot = self.screenshot()
+        return {
+            **self.state(),
+            "accessibility": self.accessibility_trusted,
+            "screenshot": screenshot.startswith(b"\x89PNG"),
+            "screenshot_bytes": len(screenshot),
+        }
+
+
 class MacBrowserBridge(MacDesktopBridge):
     def __init__(self, browser_app: str, display_index: int = 0):
         available = subprocess.run(
@@ -659,7 +877,8 @@ class MacBrowserBridge(MacDesktopBridge):
 def computer_use_tool(environment: str) -> dict[str, Any]:
     return {
         "type": "computer_use",
-        "environment": environment,
+        # The simulator bridge shows Gemini a phone screen and takes the mobile actions.
+        "environment": "mobile" if environment == "simulator" else environment,
         "enable_prompt_injection_detection": False,
         "disabled_safety_policies": DISABLED_SAFETY_POLICIES,
     }
@@ -788,6 +1007,8 @@ def create_bridge(args: argparse.Namespace) -> Any:
         return ADBBridge(device_id)
     if args.environment == "browser":
         return MacBrowserBridge(args.browser_app, args.display)
+    if args.environment == "simulator":
+        return MacSimulatorBridge(args.display, udid=args.udid)
     return MacDesktopBridge(args.display)
 
 
@@ -801,6 +1022,15 @@ def run_agent(args: argparse.Namespace) -> int:
     if args.environment == "mobile":
         system_instruction += (
             " Use list_apps when needed and pass a package name to open_app."
+        )
+    if args.environment == "simulator":
+        system_instruction = (
+            "You control an iPhone running in the iOS Simulator; the screenshot is the phone "
+            "screen. Tap with click, scroll and swipe with drag_and_drop, hold with long_press, "
+            "and type with type. iOS has no back button: go_back swipes in from the left edge, "
+            "and go_home shows the home screen. Use list_apps when needed and pass a bundle id "
+            "to open_app. Complete the user's task, inspect the updated screenshot after "
+            "actions, and state the result when finished."
         )
 
     load_gemini_api_key()
@@ -878,6 +1108,13 @@ def check_environment(args: argparse.Namespace) -> int:
                 }
             )
             ready = ready and (bool(devices) or args.avd in avds)
+        elif args.environment == "simulator":
+            bridge = MacSimulatorBridge(args.display, require_accessibility=False, udid=args.udid)
+            try:
+                result.update(bridge.check())
+            finally:
+                bridge.close()
+            ready = ready and bool(result["accessibility"] and result["screenshot"])
         else:
             bridge = MacDesktopBridge(args.display, require_accessibility=False)
             try:
@@ -909,7 +1146,7 @@ def check_environment(args: argparse.Namespace) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run Gemini Computer Use against Android or the live macOS session."
+        description="Run Gemini Computer Use against Android, the iOS Simulator, or the live macOS session."
     )
     environments = parser.add_mutually_exclusive_group(required=True)
     environments.add_argument(
@@ -921,6 +1158,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     environments.add_argument(
         "--desktop", dest="environment", action="store_const", const="desktop"
     )
+    environments.add_argument(
+        "--simulator",
+        dest="environment",
+        action="store_const",
+        const="simulator",
+        help="drive the booted iOS Simulator device (needs Accessibility, not Screen Recording)",
+    )
     parser.add_argument("--model", "-m", default=DEFAULT_MODEL)
     parser.add_argument(
         "--thinking-level",
@@ -930,6 +1174,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--max-turns", type=int, default=100)
     parser.add_argument("--device-id", help="ADB device ID for mobile mode")
+    parser.add_argument("--udid", help="simulator device UDID when more than one is booted")
     parser.add_argument("--avd", default="AI_Agent_Phone")
     parser.add_argument(
         "--display",
