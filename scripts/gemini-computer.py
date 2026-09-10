@@ -617,6 +617,8 @@ class MacDesktopBridge:
             **self.state(),
             "display_count": len(self.displays),
             "accessibility": self.accessibility_trusted,
+            # Without capture permission macOS can return only the wallpaper.
+            "screen_recording": bool(self.quartz.CGPreflightScreenCaptureAccess()),
             "screenshot": screenshot.startswith(b"\x89PNG"),
             "screenshot_bytes": len(screenshot),
         }
@@ -882,7 +884,9 @@ def check_environment(args: argparse.Namespace) -> int:
                 result.update(bridge.check())
             finally:
                 bridge.close()
-            ready = ready and bool(result["accessibility"] and result["screenshot"])
+            ready = ready and bool(
+                result["accessibility"] and result["screen_recording"] and result["screenshot"]
+            )
             if args.environment == "browser":
                 browser_available = (
                     subprocess.run(
