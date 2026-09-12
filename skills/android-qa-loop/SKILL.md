@@ -8,7 +8,7 @@ description: Test an Android app on the emulator in a fix-until-clean loop with 
 Three roles, never merged: the tester (`demo-creator qa test`, Gemini Computer Use, drives the emulator and is recorded), the reviewer (`demo-creator qa review`, Gemini agentic video, watches the recording, writes `findings.json`), and you (fix the app, rebuild, decide when the loop ends). The tester does not judge and the reviewer does not drive.
 
 ```bash
-export DEMO_CREATOR="${DEMO_CREATOR:-$HOME/code/demo-creator}"
+export DEMO_CREATOR="${DEMO_CREATOR:-${CLAUDE_PLUGIN_ROOT:-$HOME/code/demo-creator}}"
 cd "$DEMO_CREATOR" && node bin/demo-creator.mjs doctor --android
 ```
 

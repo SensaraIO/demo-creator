@@ -8,7 +8,13 @@ import path from "node:path";
 import { die, ensureDir, readJson, run, writeJson } from "./util.mjs";
 
 export const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
-export const PROJECTS_DIR = path.join(ROOT, "projects");
+// Deliveries default to <repo>/projects. When the engine is installed as a
+// Claude Code plugin its root lives in the plugin cache and is replaced on
+// update, so set DEMO_PROJECTS_DIR to keep recordings somewhere durable.
+// The dashboard reads the same variable (dashboard/lib/projects.ts).
+export const PROJECTS_DIR = process.env.DEMO_PROJECTS_DIR
+  ? path.resolve(process.env.DEMO_PROJECTS_DIR)
+  : path.join(ROOT, "projects");
 
 export function projectPaths(name) {
   const dir = path.join(PROJECTS_DIR, name);

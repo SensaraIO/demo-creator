@@ -1,0 +1,14 @@
+{
+  "name": "demo-creator",
+  "owner": {
+    "name": "Sensara"
+  },
+  "plugins": [
+    {
+      "name": "demo-creator",
+      "source": "./",
+      "description": "Branded demo-video walkthroughs of a mobile app against its BRS, recorded on the iOS Simulator or Android emulator."
+    }
+  ],
+  "description": "Branded demo-video walkthroughs of mobile apps against their BRS, recorded on the iOS Simulator or Android emulator."
+}

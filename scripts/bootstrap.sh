@@ -126,6 +126,7 @@ cat <<EOF
   repo    $DEMO_CREATOR
   skill   ~/.claude/skills/client-demo/SKILL.md
   usage   export DEMO_CREATOR="$DEMO_CREATOR"
+          export DEMO_PROJECTS_DIR=…   # optional; default \$DEMO_CREATOR/projects
 
   Recording needs a logged-in GUI session (simctl cannot capture at the login
   window). Over SSH, run claude inside that session:

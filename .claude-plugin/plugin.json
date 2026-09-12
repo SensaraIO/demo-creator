@@ -1,0 +1,8 @@
+{
+  "name": "demo-creator",
+  "version": "1.1.0",
+  "description": "Turn a mobile app's BRS or idea document into a branded demo walkthrough: one choreographed simulator/emulator take, split into per-requirement clips, verified, and built into a presentation. Skills: client-demo (iOS), android-demo-gemini, android-qa-loop, android-client-demo.",
+  "author": { "name": "Sensara" },
+  "repository": "https://github.com/SensaraIO/demo-creator",
+  "keywords": ["demo", "ios-simulator", "android-emulator", "video", "brs", "presentation"]
+}

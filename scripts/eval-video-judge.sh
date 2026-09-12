@@ -7,12 +7,12 @@
 #
 #   scripts/eval-video-judge.sh [source-project] [clipId]
 #
-# Derived from the first real run on 2026-09-02 (robyn-mccraw, clip 01-signup):
+# Derived from the first real run on 2026-09-02 (project slug redacted, clip 01-signup):
 # the judge found all four real items and rejected a fake "Payment failed" banner.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SRC="${1:-robyn-mccraw}"
+SRC="${1:?usage: eval-video-judge.sh <project>}"
 CLIP="${2:-03-home}"
 EVAL="_eval-video-judge"
 P="projects/$EVAL"

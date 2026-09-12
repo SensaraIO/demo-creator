@@ -204,7 +204,30 @@ skill at `~/.claude/skills/client-demo/SKILL.md`). A run whose status file
 hasn't been touched in 5 minutes shows as **stalled**; without a status file a
 project is simply **finished** (dist built) or **not started**.
 
-## Using from another machine
+## Install as a Claude Code plugin
+
+The repo is itself a Claude Code plugin (`.claude-plugin/plugin.json`); its
+four skills under `skills/` are discovered automatically and the engine ships
+with them, so nothing else has to be cloned.
+
+```
+/plugin marketplace add SensaraIO/demo-creator
+/plugin install demo-creator@demo-creator
+```
+
+Then set where deliveries go. The plugin directory is replaced on every update,
+so recordings must live outside it:
+
+```bash
+export DEMO_PROJECTS_DIR="$HOME/demo-creator-projects"   # engine + dashboard both read this
+```
+
+Host prerequisites are unchanged (macOS with Xcode for iOS, Node 20+, ffmpeg);
+`node bin/demo-creator.mjs doctor` from the plugin root reports what is missing.
+The skills locate the engine via `${CLAUDE_PLUGIN_ROOT}` and fall back to
+`$DEMO_CREATOR` / `~/code/demo-creator` for a plain clone.
+
+## Using from another machine (plain clone)
 
 ```bash
 git clone git@github.com:SensaraIO/demo-creator.git ~/code/demo-creator
@@ -223,9 +246,9 @@ mkdir -p ~/.codex/skills/android-client-demo
 rsync -a --delete skills/android-client-demo/ ~/.codex/skills/android-client-demo/
 ```
 
-The skills and briefs assume the repo at
-`~/code/demo-creator` (`/Users/<you>/code/demo-creator`) — adjust the paths in
-the installed SKILL.md if you keep it elsewhere. The Android skills also need
+The skills and briefs default to the repo at `~/code/demo-creator`; export
+`DEMO_CREATOR=<path>` if you keep it elsewhere, and `DEMO_PROJECTS_DIR=<path>`
+to write deliveries somewhere other than `<repo>/projects`. The Android skills also need
 `scripts/gemini-computer.py` copied to `~/.local/bin` (see docs/GEMINI-ANDROID.md). `projects/` (client
 deliveries, large videos) is deliberately not in git.
 

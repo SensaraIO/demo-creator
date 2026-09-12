@@ -8,7 +8,7 @@ description: Produce a branded Android client demo from a BRS with two separate 
 Same deliverable as `client-demo` (BRS → plan → one continuous take → per-section clips → verified → branded deck), with the iOS Simulator driver and the Claude frame-by-frame verifier replaced by two Gemini agents that never share a context: the driver (`demo-creator drive`, Gemini Computer Use) and the judge (`demo-creator verify-video`, Gemini agentic video). You orchestrate; you do not drive the device and you do not judge the clips yourself.
 
 ```bash
-export DEMO_CREATOR="${DEMO_CREATOR:-$HOME/code/demo-creator}"
+export DEMO_CREATOR="${DEMO_CREATOR:-${CLAUDE_PLUGIN_ROOT:-$HOME/code/demo-creator}}"
 cd "$DEMO_CREATOR" && node bin/demo-creator.mjs doctor --android
 ```
 

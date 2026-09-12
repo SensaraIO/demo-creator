@@ -5,17 +5,20 @@ description: Produce a branded demo-video walkthrough for any client project —
 
 # Client demo walkthrough
 
-Turn a client project's BRS into a branded presentation where every functional requirement sits next to a video of that requirement working on the iOS Simulator. The engine is demo-creator at `$DEMO_CREATOR`; set it once per session and run every command from there as `node bin/demo-creator.mjs …` (`help` lists them):
+Turn a client project's BRS into a branded presentation where every functional requirement sits next to a video of that requirement working on the iOS Simulator. The engine is demo-creator at `$DEMO_CREATOR`; set it once per session and run every command from there as `node bin/demo-creator.mjs …` (`help` lists them). When this skill is loaded from the demo-creator plugin, the engine is the plugin itself (`${CLAUDE_PLUGIN_ROOT}`); otherwise it is a clone of the repo:
 
 ```bash
-export DEMO_CREATOR="${DEMO_CREATOR:-$HOME/code/demo-creator}"
+export DEMO_CREATOR="${DEMO_CREATOR:-${CLAUDE_PLUGIN_ROOT:-$HOME/code/demo-creator}}"
+export DEMO_PROJECTS_DIR="${DEMO_PROJECTS_DIR:-$HOME/demo-creator-projects}"
 ```
 
-Never hardcode a home directory in this skill or in any command you derive from it. These flows run on several Macs under different usernames (`cheshire`, `sensara-studio`, `mac-mini1`, `mac-mini2`); an absolute `/Users/<someone>/…` path is the single most common way this pipeline breaks on a machine that isn't the one it was written on.
+`DEMO_PROJECTS_DIR` is where `projects/<client>/` (BRS, plan, recordings, deck) is written; the engine and the dashboard both read it. It must point outside the plugin directory, because a plugin update replaces that directory and would take the recordings with it. A plain clone can leave it unset and use `<repo>/projects`.
+
+Never hardcode a home directory or a username in this skill or in any command you derive from it. These flows run on many Macs under different usernames; an absolute `/Users/<someone>/…` path is the single most common way this pipeline breaks on a machine that isn't the one it was written on.
 
 How a demo is made: one continuous simulator capture while the driver appends a timestamped marker at every section boundary; afterwards the master is cut into per-clip videos, each clip is verified against the evidence in the plan, only failures are retaken, and `build` produces the deck. One take instead of one recording per clip is what made this fast; per-clip recording (`record start|stop`) remains only as the retake path.
 
-Division of labour: you (Claude Code) orchestrate: CLI, planning, prep, splitting, verification, deck, status file. The take has one driver. Default: one Codex agent (GPT 5.6 Sol, `-s danger-full-access`, with the `xcodebuildmcp` simulator tools) prompted with `brief <client> recorder`, which carries the take script, the marker protocol and the driver-side simulator gotchas. If you have already driven these exact flows in this session (you just built or verified the app in the simulator yourself), drive the take yourself and follow `agents/recorder.md` directly; a rehearsed driver is the fastest clean path, and spawning an agent to re-learn what you just did is waste.
+Division of labour: you (Claude Code) orchestrate: CLI, planning, prep, splitting, verification, deck, status file. The take has one driver. Default: one Codex agent (GPT 5.6 Sol, `-s danger-full-access`, with the `xcodebuildmcp` simulator tools) prompted with `brief <client> recorder`, which carries the take script, the marker protocol and the driver-side simulator gotchas. If you have already driven these exact flows in this session (you just built or verified the app in the simulator yourself), drive the take yourself and follow `agents/recorder.md` directly; a rehearsed driver is the fastest clean path, and spawning an agent to re-learn what you just did is waste. If Codex or `xcodebuildmcp` is not installed on this machine, do not stop to install it: drive the take yourself with whatever simulator control you have (an iOS-simulator MCP, or `xcrun simctl` plus the app's own accessibility tree), following the same brief.
 
 Say in a line what you are about to do before you start, give brief updates as stages complete, and close with a recap that stands on its own: what was produced, what was left out and why, and where the deck is.
 
@@ -28,18 +31,20 @@ Before ending your turn, check your last paragraph. If it is a plan, an analysis
 Confirm the engine before anything else in a session:
 
 ```bash
-export DEMO_CREATOR="${DEMO_CREATOR:-$HOME/code/demo-creator}"
-[ -d "$DEMO_CREATOR" ] && (cd "$DEMO_CREATOR" && node bin/demo-creator.mjs doctor)
+export DEMO_CREATOR="${DEMO_CREATOR:-${CLAUDE_PLUGIN_ROOT:-$HOME/code/demo-creator}}"
+[ -f "$DEMO_CREATOR/bin/demo-creator.mjs" ] && (cd "$DEMO_CREATOR" && node bin/demo-creator.mjs doctor)
 ```
 
-If the directory is missing or `doctor` reports missing tools, run the bootstrap. It is idempotent, and it goes through `gh` because the repo is private (`gh auth login` first if `gh auth status` fails):
+`doctor` needs macOS with Xcode (`xcrun simctl`), Node 20+, `ffmpeg` and `ffprobe`. If a tool is missing, install it (`brew install node ffmpeg`; Xcode from the App Store, then `sudo xcodebuild -runFirstLaunch`) and rerun `doctor`.
+
+If `bin/demo-creator.mjs` is not there at all, the skill was installed without its engine. Either install the plugin (`/plugin marketplace add SensaraIO/demo-creator`, then `/plugin install demo-creator@demo-creator`), or clone the repo and run its bootstrap, which is idempotent:
 
 ```bash
 gh api repos/SensaraIO/demo-creator/contents/scripts/bootstrap.sh \
   -H "Accept: application/vnd.github.raw" | bash
 ```
 
-It clones or fast-forwards the repo to `~/code/demo-creator`, installs what `doctor` checks, re-syncs this skill, and fixes `PATH` for non-interactive SSH shells. Do not start a demo until `doctor` passes.
+Use `gh` (after `gh auth login`) if the repo is private to you; a public clone works with plain `git clone https://github.com/SensaraIO/demo-creator.git ~/code/demo-creator && bash ~/code/demo-creator/scripts/bootstrap.sh`. The bootstrap clones or fast-forwards the repo to `~/code/demo-creator`, installs what `doctor` checks, re-syncs this skill, and fixes `PATH` for non-interactive SSH shells. Do not start a demo until `doctor` passes.
 
 Over SSH the login keychain is unreachable (`errSecInteractionNotAllowed`), so `claude` cannot authenticate, and `xcrun simctl io recordVideo` cannot capture without a logged-in GUI session either. Wrap remote runs inside that session, and treat a machine sitting at the login window as unable to produce a demo:
 
@@ -83,7 +88,7 @@ Split the master by markers. `recordings/markers.jsonl` holds lines `{"t": <epoc
 
   Every shipped clip is constant 30 fps h264; raw or copy-spliced VFR stutters or freezes in common players.
 - Look at the boundary frames of every clip (`ffmpeg -ss <t> -i … -frames:v 1`) and nudge ±1–2 s until each opens on its first settled screen. That is the difference between "clean" and "obviously machine-cut".
-- Look at the last frame of each take after CFR conversion (`ffmpeg -sseof -2 -i clip.mp4 -frames:v 1 last.png`). `recordVideo` flushes lazily, and on robyn-mccraw (2026-08-25) two takes lost their payoff frames. Plain `-ss` probes near EOF misreport on VFR masters, so check after normalising, and only accept a take whose last frame is the intended final screen.
+- Look at the last frame of each take after CFR conversion (`ffmpeg -sseof -2 -i clip.mp4 -frames:v 1 last.png`). `recordVideo` flushes lazily, and on one 2026-08-25 run two takes lost their payoff frames. Plain `-ss` probes near EOF misreport on VFR masters, so check after normalising, and only accept a take whose last frame is the intended final screen.
 - Also ship a trimmed CFR `master-full.mp4` (dead tail cut). Clients like the continuous video, and `build` links it from the overview.
 
 Mark each clip `recorded` with `durationSec` as its file lands.
@@ -94,14 +99,14 @@ Verify with a context that did not drive the take: set `state: "verifying"`, the
 
 ## demo-status.json (dashboard contract)
 
-The dashboard (`$DEMO_CREATOR/dashboard`, `npm run dev`, port 4400) watches this file. Rewrite it whole and atomically at every state transition and after every clip, always bumping `updatedAt`; a file untouched for 5 minutes shows as stalled, so touch it with a fresh `stageDetail` during long quiet stages. If the run dies at any stage, write `state: "failed"` and a top-level `error` before stopping; never leave the file claiming progress that isn't happening.
+The dashboard (`$DEMO_CREATOR/dashboard`, `npm install && npm run dev`, port 4400, honours the same `DEMO_PROJECTS_DIR`) watches this file. It is optional; the pipeline does not depend on it running. Rewrite it whole and atomically at every state transition and after every clip, always bumping `updatedAt`; a file untouched for 5 minutes shows as stalled, so touch it with a fresh `stageDetail` during long quiet stages. If the run dies at any stage, write `state: "failed"` and a top-level `error` before stopping; never leave the file claiming progress that isn't happening.
 
 ```json
 {
   "version": 1,
-  "project": "ray-white",
-  "client": "Ray White",
-  "app": "Profile P.I.",
+  "project": "acme-client",
+  "client": "Acme Client",
+  "app": "Acme App",
   "state": "recording",
   "stageDetail": "Take: section 3 of 11 (02-onboarding)",
   "startedAt": "2026-07-28T14:00:00Z",

@@ -7,7 +7,7 @@ description: Produce a branded Android client demo from a BRS. Plan one continuo
 
 Turn a client's BRS into a branded presentation where every visual functional
 requirement sits beside video evidence of that requirement working on Android.
-The engine is `demo-creator` at `$DEMO_CREATOR` (default `~/code/demo-creator`;
+The engine is `demo-creator` at `$DEMO_CREATOR` (default `${CLAUDE_PLUGIN_ROOT}` when loaded from the plugin, else `~/code/demo-creator`;
 never hardcode a home directory, these flows run on several Macs under different
 usernames). Each delivery lives under `projects/<client>/` and the dashboard
 watches its `demo-status.json` live at `http://127.0.0.1:4400` when
